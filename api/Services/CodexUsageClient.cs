@@ -26,20 +26,29 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
 
     public async Task ValidateCredentialAsync(string cookieCredential, CancellationToken ct = default)
     {
-        var auth = ResolveAuth(cookieCredential);
-        _ = await EnsureAccessTokenAsync(auth, ct);
+        // Rør faktisk wham/usage — ellers gemmes ugyldige tokens uden fejl.
+        _ = await FetchAsync(cookieCredential, ct);
     }
 
     public async Task<CodexUsageSnapshotDto> FetchAsync(string cookieCredential, CancellationToken ct = default)
     {
         var auth = ResolveAuth(cookieCredential);
         var (accessToken, accountId) = await EnsureAccessTokenAsync(auth, ct);
+        accountId ??= TryReadAccountIdFromJwt(accessToken);
 
         var usageJson = await GetAuthorizedAsync(
             "https://chatgpt.com/backend-api/wham/usage",
             accessToken, accountId, auth.CookieHeader, "https://chatgpt.com/codex/settings/usage", ct);
 
+        if (string.IsNullOrWhiteSpace(usageJson) || usageJson.Trim() is "null" or "undefined" or "{}")
+            throw new InvalidOperationException(
+                "Codex usage returnerede tomt svar. Token kan mangle Codex-adgang — kør `codex login` igen.");
+
         using var usageDoc = JsonDocument.Parse(usageJson);
+        if (usageDoc.RootElement.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException(
+                $"Codex usage returnerede {usageDoc.RootElement.ValueKind} i stedet for JSON-objekt.");
+
         var meters = ParseUsageMeters(usageDoc.RootElement);
         var planType = usageDoc.RootElement.TryGetProperty("plan_type", out var pt)
             && pt.ValueKind == JsonValueKind.String ? pt.GetString() : null;
@@ -52,8 +61,12 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
             profileJson = await GetAuthorizedAsync(
                 "https://chatgpt.com/backend-api/wham/profiles/me",
                 accessToken, accountId, auth.CookieHeader, "https://chatgpt.com/codex/settings/usage", ct);
-            using var profileDoc = JsonDocument.Parse(profileJson);
-            (buckets, lifetime) = ParseProfileBuckets(profileDoc.RootElement);
+            if (!string.IsNullOrWhiteSpace(profileJson) && profileJson.Trim() is not ("null" or "undefined"))
+            {
+                using var profileDoc = JsonDocument.Parse(profileJson);
+                if (profileDoc.RootElement.ValueKind == JsonValueKind.Object)
+                    (buckets, lifetime) = ParseProfileBuckets(profileDoc.RootElement);
+            }
         }
         catch (Exception ex)
         {
@@ -348,7 +361,37 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
     }
 
     private static string? GetJsonString(JsonElement el, string name) =>
-        el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+        el.ValueKind == JsonValueKind.Object
+        && el.TryGetProperty(name, out var p)
+        && p.ValueKind == JsonValueKind.String
+            ? p.GetString()
+            : null;
+
+    /// <summary>Læs chatgpt_account_id fra access_token JWT-claims hvis auth.json mangler account_id.</summary>
+    private static string? TryReadAccountIdFromJwt(string accessToken)
+    {
+        try
+        {
+            var parts = accessToken.Split('.');
+            if (parts.Length < 2) return null;
+            var json = Encoding.UTF8.GetString(Base64UrlDecode(parts[1]));
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("https://api.openai.com/auth", out var auth)
+                && auth.ValueKind == JsonValueKind.Object)
+            {
+                var id = GetJsonString(auth, "chatgpt_account_id")
+                    ?? GetJsonString(auth, "account_id");
+                if (!string.IsNullOrWhiteSpace(id)) return id;
+            }
+            return GetJsonString(root, "chatgpt_account_id")
+                ?? GetJsonString(root, "account_id");
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private static string StripAccidentalCookieName(string c)
     {
@@ -386,17 +429,18 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
         if (root.ValueKind != JsonValueKind.Object) return meters;
         var rate = root.TryGetProperty("rate_limit", out var rl) && rl.ValueKind == JsonValueKind.Object ? rl : root;
 
-        if (rate.TryGetProperty("primary_window", out var primary))
+        // ChatGPT sætter ofte primary_window/secondary_window til null — må ikke kalde TryGetProperty på Null.
+        if (TryGetObject(rate, "primary_window", out var primary))
             meters.Add(ParseWindow(primary, "5 timer", 18000));
-        if (rate.TryGetProperty("secondary_window", out var secondary))
+        if (TryGetObject(rate, "secondary_window", out var secondary))
             meters.Add(ParseWindow(secondary, "Uge", 604800));
 
-        if (meters.Count == 0 && root.TryGetProperty("primary_window", out var p2))
+        if (meters.Count == 0 && TryGetObject(root, "primary_window", out var p2))
             meters.Add(ParseWindow(p2, "5 timer", 18000));
-        if (meters.Count == 0 && root.TryGetProperty("secondary_window", out var s2))
+        if (meters.Count == 0 && TryGetObject(root, "secondary_window", out var s2))
             meters.Add(ParseWindow(s2, "Uge", 604800));
 
-        if (root.TryGetProperty("credits", out var credits))
+        if (TryGetObject(root, "credits", out var credits))
         {
             var has = credits.TryGetProperty("has_credits", out var hc) && hc.ValueKind == JsonValueKind.True;
             var unlimited = credits.TryGetProperty("unlimited", out var un) && un.ValueKind == JsonValueKind.True;
@@ -407,15 +451,27 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
                 meters.Add(new("Credits", 0, null, balance.ToString("0.##", CultureInfo.InvariantCulture)));
         }
 
-        if (root.TryGetProperty("code_review_rate_limit", out var cr)
-            && cr.TryGetProperty("primary_window", out var crw))
+        if (TryGetObject(root, "code_review_rate_limit", out var cr)
+            && TryGetObject(cr, "primary_window", out var crw))
             meters.Add(ParseWindow(crw, "Code review", 604800));
 
         return meters;
     }
 
+    private static bool TryGetObject(JsonElement parent, string name, out JsonElement obj)
+    {
+        obj = default;
+        if (parent.ValueKind != JsonValueKind.Object) return false;
+        if (!parent.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.Object) return false;
+        obj = el;
+        return true;
+    }
+
     private static CursorLiveMeterDto ParseWindow(JsonElement window, string defaultLabel, int defaultSeconds)
     {
+        if (window.ValueKind != JsonValueKind.Object)
+            return new CursorLiveMeterDto(defaultLabel, 0, null, null);
+
         var used = window.TryGetProperty("used_percent", out var up)
             ? (up.ValueKind == JsonValueKind.Number ? up.GetDouble() : 0)
             : 0;
