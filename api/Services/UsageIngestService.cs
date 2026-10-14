@@ -8,6 +8,7 @@ public sealed class UsageIngestService(
     AppDbContext db,
     CursorUsageClient cursor,
     OpenAiUsageClient openAi,
+    CodexUsageClient codex,
     CredentialProtector protector,
     ILogger<UsageIngestService> log)
 {
@@ -221,6 +222,104 @@ public sealed class UsageIngestService(
         connection.LastSyncError = null;
         await db.SaveChangesAsync(ct);
         return (upserted, costs.Count);
+    }
+
+    public async Task<(int Upserted, int MeterCount, long? LifetimeTokens)> IngestCodexAsync(
+        ProviderConnection connection,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(connection.EncryptedCredential))
+            throw new InvalidOperationException("Codex-forbindelse mangler ChatGPT-session-cookie");
+
+        var cookie = protector.Decrypt(connection.EncryptedCredential);
+        var snap = await codex.FetchAsync(cookie, ct);
+
+        if (snap.Meters.Count > 0)
+            await UpsertLiveMetersAsync(connection.OrganizationId, ProviderType.Codex, snap.Meters, ct);
+
+        if (!string.IsNullOrWhiteSpace(snap.RawUsageJson))
+        {
+            db.ProviderRaws.Add(new ProviderRaw
+            {
+                OrganizationId = connection.OrganizationId,
+                Provider = ProviderType.Codex,
+                PayloadJson = snap.RawUsageJson
+            });
+        }
+        if (!string.IsNullOrWhiteSpace(snap.RawProfileJson))
+        {
+            db.ProviderRaws.Add(new ProviderRaw
+            {
+                OrganizationId = connection.OrganizationId,
+                Provider = ProviderType.Codex,
+                PayloadJson = snap.RawProfileJson
+            });
+        }
+
+        var upserted = 0;
+        DateTimeOffset? minDay = null;
+        DateTimeOffset? maxDay = null;
+
+        foreach (var b in snap.DailyBuckets)
+        {
+            var occurred = new DateTimeOffset(b.Day.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+            minDay = minDay is null || occurred < minDay ? occurred : minDay;
+            maxDay = maxDay is null || occurred > maxDay ? occurred : maxDay;
+
+            var existing = await db.UsageEvents.FirstOrDefaultAsync(x =>
+                x.OrganizationId == connection.OrganizationId
+                && x.Provider == ProviderType.Codex
+                && x.ExternalKey == b.ExternalKey, ct);
+
+            if (existing is null)
+            {
+                db.UsageEvents.Add(new UsageEvent
+                {
+                    OrganizationId = connection.OrganizationId,
+                    Provider = ProviderType.Codex,
+                    ExternalKey = b.ExternalKey,
+                    OccurredAt = occurred,
+                    Model = "codex",
+                    Kind = "profile_daily",
+                    // ChatGPT profile buckets are total tokens (ikke input/output-split).
+                    InputTokens = b.Tokens,
+                    OutputTokens = 0,
+                    RequestCount = 1
+                });
+                upserted++;
+            }
+            else
+            {
+                existing.InputTokens = b.Tokens;
+                existing.OccurredAt = occurred;
+                existing.IngestedAt = DateTimeOffset.UtcNow;
+                upserted++;
+            }
+        }
+
+        if (snap.LifetimeTokens is long life)
+        {
+            await UpsertLiveMeterAsync(connection.OrganizationId, ProviderType.Codex, "Lifetime tokens",
+                0, null, life.ToString("N0"), ct);
+        }
+
+        if (!string.IsNullOrWhiteSpace(snap.PlanType))
+        {
+            await UpsertLiveMeterAsync(connection.OrganizationId, ProviderType.Codex, "Plan",
+                0, null, snap.PlanType, ct);
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        if (minDay is not null && maxDay is not null)
+            await RebuildDailyAsync(connection.OrganizationId, ProviderType.Codex, minDay.Value, maxDay.Value.AddDays(1), ct);
+
+        connection.LastSyncAt = DateTimeOffset.UtcNow;
+        connection.LastSyncError = null;
+        await db.SaveChangesAsync(ct);
+        log.LogInformation("Codex ingest org={Org} upserted={N} meters={M}",
+            connection.OrganizationId, upserted, snap.Meters.Count);
+        return (upserted, snap.Meters.Count, snap.LifetimeTokens);
     }
 
     public async Task UpsertLiveMetersAsync(

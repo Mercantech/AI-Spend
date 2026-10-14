@@ -52,6 +52,12 @@ export function ConnectionsPage() {
       } else if (c.provider === 'openai') {
         const r = await api.backfillOpenAi({ connectionId: c.id })
         setStatus(`OpenAI backfill: ${r.upserted} buckets, ${r.costRows} cost-dage.`)
+      } else if (c.provider === 'codex') {
+        const r = await api.backfillCodex({ connectionId: c.id })
+        setStatus(
+          `Codex sync: ${r.upserted} dag-buckets, ${r.meters} meters` +
+            (r.lifetimeTokens != null ? `, lifetime ${r.lifetimeTokens.toLocaleString('da-DK')} tokens.` : '.'),
+        )
       }
       await reload()
     } catch (err) {
@@ -74,13 +80,25 @@ export function ConnectionsPage() {
     }
   }
 
+  const secretLabel =
+    provider === 'cursor'
+      ? 'Session-cookie eller Team Admin-nøgle'
+      : provider === 'codex'
+        ? 'ChatGPT session-cookie'
+        : 'API-nøgle'
+
+  const secretPlaceholder =
+    provider === 'cursor'
+      ? 'WorkosCursorSessionToken=… eller crsr_…'
+      : provider === 'codex'
+        ? '__Secure-next-auth.session-token=… (eller .0 + .1)'
+        : 'OpenAI Admin key'
+
   return (
     <div className="page">
       <header className="page-head">
         <h1>Forbindelser</h1>
-        <p className="lede">
-          Nøgler gemmes krypteret på serveren. Cursor User API-nøgler virker <em>ikke</em> til usage.
-        </p>
+        <p className="lede">Nøgler/cookies gemmes krypteret på serveren.</p>
       </header>
 
       {provider === 'cursor' && (
@@ -90,12 +108,30 @@ export function ConnectionsPage() {
             <a href="https://cursor.com/dashboard/usage" target="_blank" rel="noreferrer">
               cursor.com/dashboard/usage
             </a>
-            , tryk F12 → Application → Cookies → kopiér værdien af{' '}
-            <code>WorkosCursorSessionToken</code> og indsæt den herunder.
+            , F12 → Application → Cookies → kopiér <code>WorkosCursorSessionToken</code>.
           </p>
           <p>
-            <strong>Team (Enterprise):</strong> brug en Team Admin API-nøgle (`crsr_…`) fra Cursor
-            Dashboard → Settings → API Keys — ikke en User API-nøgle.
+            <strong>Team (Enterprise):</strong> Team Admin API-nøgle (`crsr_…`) — ikke User API-nøgle.
+          </p>
+        </div>
+      )}
+
+      {provider === 'codex' && (
+        <div className="hint-box">
+          <p>
+            <strong>Codex / ChatGPT:</strong> log ind på{' '}
+            <a href="https://chatgpt.com" target="_blank" rel="noreferrer">
+              chatgpt.com
+            </a>
+            , F12 → Application → Cookies → kopiér{' '}
+            <code>__Secure-next-auth.session-token</code> (eller både <code>.0</code> og{' '}
+            <code>.1</code> hvis cookien er sharded — indsæt som{' '}
+            <code>navn=værdi; navn=værdi</code>).
+          </p>
+          <p>
+            Vi henter rate-limits (5t/uge/credits) + daglige token-buckets fra ChatGPT-profilen.
+            Bemærk: buckets er <em>total tokens</em> (ikke input/output-split), og dagens bucket kan
+            mangle pga. OpenAI-aggregationsforsinkelse.
           </p>
         </div>
       )}
@@ -105,7 +141,8 @@ export function ConnectionsPage() {
           Provider
           <select value={provider} onChange={(e) => setProvider(e.target.value)}>
             <option value="cursor">Cursor</option>
-            <option value="openai">OpenAI</option>
+            <option value="codex">Codex (ChatGPT)</option>
+            <option value="openai">OpenAI Admin</option>
           </select>
         </label>
         <label>
@@ -113,17 +150,13 @@ export function ConnectionsPage() {
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Valgfri" />
         </label>
         <label className="grow">
-          {provider === 'cursor' ? 'Session-cookie eller Team Admin-nøgle' : 'API-nøgle'}
+          {secretLabel}
           <input
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             required
-            placeholder={
-              provider === 'cursor'
-                ? 'WorkosCursorSessionToken=… eller crsr_…'
-                : 'OpenAI Admin key'
-            }
+            placeholder={secretPlaceholder}
             autoComplete="off"
           />
         </label>

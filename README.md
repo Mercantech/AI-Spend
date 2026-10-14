@@ -49,7 +49,10 @@ Se `.env.example`. Vigtige nøgler:
 ## Forbindelser
 
 1. Log ind i web
-2. **Forbindelser** → tilføj Cursor Admin API-nøgle og/eller OpenAI Admin-nøgle
+2. **Forbindelser** → tilføj:
+   - **Cursor:** `WorkosCursorSessionToken` (eller Team Admin `crsr_…`)
+   - **Codex:** ChatGPT `__Secure-next-auth.session-token` (fra chatgpt.com cookies)
+   - **OpenAI:** Admin API-nøgle (valgfri)
 3. Klik **Backfill** (eller vent på 15-min sync)
 
 ## API (udvalg)

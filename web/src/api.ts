@@ -138,6 +138,10 @@ export const api = {
     apiFetch('/ingest/openai/backfill', { method: 'POST', body: JSON.stringify(body) }).then((r) =>
       json<{ upserted: number; costRows: number }>(r),
     ),
+  backfillCodex: (body: { organizationId?: string; connectionId?: string }) =>
+    apiFetch('/ingest/codex/backfill', { method: 'POST', body: JSON.stringify(body) }).then((r) =>
+      json<{ upserted: number; meters: number; lifetimeTokens: number | null }>(r),
+    ),
   summary: (from: string, to: string, organizationId?: string) =>
     apiFetch(`/usage/summary${qs({ from, to, organizationId })}`).then((r) => json<UsageSummary>(r)),
   series: (from: string, to: string, groupBy: string, organizationId?: string) =>

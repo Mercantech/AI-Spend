@@ -61,6 +61,11 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
 
 builder.Services.AddHttpClient<CursorUsageClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
 builder.Services.AddHttpClient<OpenAiUsageClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
+builder.Services.AddHttpClient<CodexUsageClient>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(60);
+    c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "AI-Spend/1.0");
+});
 builder.Services.AddSingleton<CredentialProtector>();
 builder.Services.AddScoped<OrgAccessService>();
 builder.Services.AddScoped<UsageIngestService>();
@@ -155,7 +160,8 @@ app.MapGet("/api/connections", async (ClaimsPrincipal user, Guid? organizationId
 }).RequireAuthorization();
 
 app.MapPost("/api/connections", async (ClaimsPrincipal user, CreateConnectionRequest body, Guid? organizationId,
-    OrgAccessService orgs, AppDbContext db, CredentialProtector protector, CursorUsageClient cursorClient) =>
+    OrgAccessService orgs, AppDbContext db, CredentialProtector protector,
+    CursorUsageClient cursorClient, CodexUsageClient codexClient) =>
 {
     var sub = RequireUserSub(user);
     var org = await orgs.GetOrgForUserAsync(sub, organizationId)
@@ -169,6 +175,8 @@ app.MapPost("/api/connections", async (ClaimsPrincipal user, CreateConnectionReq
     var secret = body.ApiKey.Trim();
     if (provider == ProviderType.Cursor)
         await cursorClient.ValidateCredentialAsync(secret);
+    else if (provider == ProviderType.Codex)
+        await codexClient.ValidateCredentialAsync(secret);
 
     var conn = new ProviderConnection
     {
@@ -235,6 +243,24 @@ app.MapPost("/api/ingest/openai/backfill", async (ClaimsPrincipal user, Backfill
     var from = body.From?.ToUniversalTime() ?? to.AddDays(-30);
     var (upserted, costs) = await ingest.IngestOpenAiAsync(conn, from, to);
     return Results.Ok(new { upserted, costRows = costs, from, to, connectionId = conn.Id });
+}).RequireAuthorization();
+
+app.MapPost("/api/ingest/codex/backfill", async (ClaimsPrincipal user, BackfillRequest body,
+    OrgAccessService orgs, AppDbContext db, UsageIngestService ingest) =>
+{
+    var sub = RequireUserSub(user);
+    var org = await orgs.GetOrgForUserAsync(sub, body.OrganizationId)
+        ?? throw new UnauthorizedAccessException("Organisation ikke fundet");
+    await orgs.RequireAdminAsync(sub, org.Id);
+
+    var conn = body.ConnectionId is Guid cid
+        ? await db.ProviderConnections.FirstOrDefaultAsync(c => c.Id == cid && c.OrganizationId == org.Id)
+        : await db.ProviderConnections.FirstOrDefaultAsync(c =>
+            c.OrganizationId == org.Id && c.Provider == ProviderType.Codex && c.IsActive);
+    if (conn is null) return Results.BadRequest(new { error = "Ingen Codex-forbindelse" });
+
+    var (upserted, meters, lifetime) = await ingest.IngestCodexAsync(conn);
+    return Results.Ok(new { upserted, meters, lifetimeTokens = lifetime, connectionId = conn.Id });
 }).RequireAuthorization();
 
 app.MapGet("/api/usage/summary", async (ClaimsPrincipal user, Guid? organizationId, HttpRequest req,

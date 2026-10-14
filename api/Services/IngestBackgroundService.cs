@@ -47,6 +47,8 @@ public sealed class IngestBackgroundService(
                     await ingest.IngestCursorAsync(c, from, to, ct);
                 else if (c.Provider == ProviderType.OpenAi)
                     await ingest.IngestOpenAiAsync(c, from, to, ct);
+                else if (c.Provider == ProviderType.Codex)
+                    await ingest.IngestCodexAsync(c, ct);
             }
             catch (Exception ex)
             {
