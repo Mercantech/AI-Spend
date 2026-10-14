@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, type Connection } from '../api'
+import { api, deepBackfillFrom, MAX_HISTORY_DAYS, type Connection } from '../api'
 
 export function ConnectionsPage() {
   const [items, setItems] = useState<Connection[]>([])
@@ -44,24 +44,27 @@ export function ConnectionsPage() {
   async function backfill(c: Connection) {
     setBusy(true)
     setError(null)
-    setStatus(null)
+    setStatus(`Henter historik (op til ${MAX_HISTORY_DAYS} dage)… det kan tage et minut.`)
     try {
+      const from = deepBackfillFrom()
       if (c.provider === 'cursor') {
-        const r = await api.backfillCursor({ connectionId: c.id })
-        setStatus(`Cursor backfill: ${r.upserted} events (${r.rawStored} raw).`)
+        const r = await api.backfillCursor({ connectionId: c.id, from })
+        setStatus(`Cursor backfill: ${r.upserted} events (${r.rawStored} raw) — max historik.`)
       } else if (c.provider === 'openai') {
-        const r = await api.backfillOpenAi({ connectionId: c.id })
-        setStatus(`OpenAI backfill: ${r.upserted} buckets, ${r.costRows} cost-dage.`)
+        const r = await api.backfillOpenAi({ connectionId: c.id, from })
+        setStatus(`OpenAI backfill: ${r.upserted} buckets, ${r.costRows} cost-dage — max historik.`)
       } else if (c.provider === 'codex') {
         const r = await api.backfillCodex({ connectionId: c.id })
         setStatus(
           `Codex sync: ${r.upserted} dag-buckets, ${r.meters} meters` +
-            (r.lifetimeTokens != null ? `, lifetime ${r.lifetimeTokens.toLocaleString('da-DK')} tokens.` : '.'),
+            (r.lifetimeTokens != null ? `, lifetime ${r.lifetimeTokens.toLocaleString('da-DK')} tokens.` : '.') +
+            ' (Codex giver kun de seneste buckets fra profilen.)',
         )
       }
       await reload()
     } catch (err) {
       setError(parseErr(err))
+      setStatus(null)
     } finally {
       setBusy(false)
     }
@@ -187,7 +190,7 @@ export function ConnectionsPage() {
               </td>
               <td className="actions">
                 <button type="button" disabled={busy} onClick={() => void backfill(c)}>
-                  Backfill
+                  Hent historik
                 </button>
                 <button type="button" className="danger" disabled={busy} onClick={() => void remove(c)}>
                   Slet

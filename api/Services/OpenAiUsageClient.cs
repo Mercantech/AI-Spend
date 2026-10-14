@@ -24,11 +24,40 @@ public sealed record OpenAiCostBucketDto(
 
 public sealed class OpenAiUsageClient(HttpClient http, ILogger<OpenAiUsageClient> log)
 {
+    /// <summary>OpenAI completions usage: max ~31 daily buckets per call.</summary>
+    public const int MaxRangeDays = 30;
+
     public async Task<IReadOnlyList<OpenAiUsageBucketDto>> FetchCompletionsUsageAsync(
         string adminKey,
         DateTimeOffset start,
         DateTimeOffset end,
         CancellationToken ct = default)
+    {
+        if (end < start) (start, end) = (end, start);
+        var results = new List<OpenAiUsageBucketDto>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        var cursor = start;
+        while (cursor < end)
+        {
+            var windowEnd = cursor.AddDays(MaxRangeDays);
+            if (windowEnd > end) windowEnd = end;
+            var batch = await FetchCompletionsWindowAsync(adminKey, cursor, windowEnd, ct);
+            foreach (var row in batch)
+            {
+                if (seen.Add(row.ExternalKey))
+                    results.Add(row);
+            }
+            log.LogInformation("OpenAI usage window {From:u}→{To:u}: {Count} buckets (total {Total})",
+                cursor, windowEnd, batch.Count, results.Count);
+            cursor = windowEnd;
+        }
+
+        return results;
+    }
+
+    private async Task<IReadOnlyList<OpenAiUsageBucketDto>> FetchCompletionsWindowAsync(
+        string adminKey, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
     {
         var results = new List<OpenAiUsageBucketDto>();
         string? after = null;
@@ -80,6 +109,33 @@ public sealed class OpenAiUsageClient(HttpClient http, ILogger<OpenAiUsageClient
         } while (!string.IsNullOrEmpty(after));
 
         return results;
+    }
+
+    public async Task<IReadOnlyList<OpenAiCostBucketDto>> FetchCostsRangeAsync(
+        string adminKey,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken ct = default)
+    {
+        if (to < from) (from, to) = (to, from);
+        var all = new List<OpenAiCostBucketDto>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var month = new DateTimeOffset(from.Year, from.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        var endMonth = new DateTimeOffset(to.Year, to.Month, 1, 0, 0, 0, TimeSpan.Zero);
+
+        while (month <= endMonth)
+        {
+            var batch = await FetchCostsAsync(adminKey, month, ct);
+            foreach (var row in batch)
+            {
+                if (row.DayStart < from || row.DayStart > to) continue;
+                if (seen.Add(row.ExternalKey))
+                    all.Add(row);
+            }
+            month = month.AddMonths(1);
+        }
+
+        return all;
     }
 
     public async Task<IReadOnlyList<OpenAiCostBucketDto>> FetchCostsAsync(

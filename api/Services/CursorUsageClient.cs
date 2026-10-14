@@ -62,28 +62,67 @@ public sealed class CursorUsageClient(HttpClient http, ILogger<CursorUsageClient
         return false;
     }
 
+    /// <summary>Cursor capped at 30 days per request — we chunk automatically.</summary>
+    public const int MaxRangeDays = 30;
+
     public async Task<IReadOnlyList<CursorUsageEventDto>> FetchFilteredUsageEventsAsync(
         string credential,
         DateTimeOffset from,
         DateTimeOffset to,
         CancellationToken ct = default)
     {
-        if (LooksLikeSessionCookie(credential))
-            return await FetchDashboardEventsAsync(credential, from, to, ct);
+        if (to < from) (from, to) = (to, from);
+        var all = new List<CursorUsageEventDto>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        try
+        foreach (var (windowFrom, windowTo) in ChunkDateRange(from, to, MaxRangeDays))
         {
-            return await FetchAdminEventsAsync(credential, from, to, ct);
+            IReadOnlyList<CursorUsageEventDto> batch;
+            if (LooksLikeSessionCookie(credential))
+                batch = await FetchDashboardEventsAsync(credential, windowFrom, windowTo, ct);
+            else
+            {
+                try
+                {
+                    batch = await FetchAdminEventsAsync(credential, windowFrom, windowTo, ct);
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("Invalid Team API Key", StringComparison.OrdinalIgnoreCase)
+                                                           || ex.Message.Contains("User API-nøgle", StringComparison.OrdinalIgnoreCase)
+                                                           || ex.Message.Contains("Team API Key", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Cursor User API-nøgler kan ikke hente usage (kun Cloud Agents). " +
+                        "Til personligt forbrug: indsæt WorkosCursorSessionToken fra " +
+                        "https://cursor.com/dashboard/usage → DevTools (F12) → Application → Cookies. " +
+                        "Til team: brug en Team Admin API-nøgle (Enterprise).");
+                }
+            }
+
+            foreach (var ev in batch)
+            {
+                if (seen.Add(ev.ExternalKey))
+                    all.Add(ev);
+            }
+
+            log.LogInformation("Cursor window {From:u}→{To:u}: {Count} events (total {Total})",
+                windowFrom, windowTo, batch.Count, all.Count);
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Invalid Team API Key", StringComparison.OrdinalIgnoreCase)
-                                                   || ex.Message.Contains("User API-nøgle", StringComparison.OrdinalIgnoreCase)
-                                                   || ex.Message.Contains("Team API Key", StringComparison.OrdinalIgnoreCase))
+
+        return all;
+    }
+
+    public static IEnumerable<(DateTimeOffset From, DateTimeOffset To)> ChunkDateRange(
+        DateTimeOffset from, DateTimeOffset to, int maxDays)
+    {
+        var cursor = from;
+        while (cursor < to)
         {
-            throw new InvalidOperationException(
-                "Cursor User API-nøgler kan ikke hente usage (kun Cloud Agents). " +
-                "Til personligt forbrug: indsæt WorkosCursorSessionToken fra " +
-                "https://cursor.com/dashboard/usage → DevTools (F12) → Application → Cookies. " +
-                "Til team: brug en Team Admin API-nøgle (Enterprise).");
+            var end = cursor.AddDays(maxDays);
+            if (end > to) end = to;
+            // Inclusive API bounds: end each window 1ms before next start when not final
+            var windowTo = end < to ? end.AddMilliseconds(-1) : to;
+            yield return (cursor, windowTo);
+            cursor = end;
         }
     }
 

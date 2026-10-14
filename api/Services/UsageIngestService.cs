@@ -171,8 +171,7 @@ public sealed class UsageIngestService(
             }
         }
 
-        var monthStart = new DateTimeOffset(from.Year, from.Month, 1, 0, 0, 0, TimeSpan.Zero);
-        var costs = await openAi.FetchCostsAsync(key, monthStart, ct);
+        var costs = await openAi.FetchCostsRangeAsync(key, from, to, ct);
         foreach (var c in costs)
         {
             var day = DateOnly.FromDateTime(c.DayStart.UtcDateTime);

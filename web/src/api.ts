@@ -174,9 +174,16 @@ export function formatTokens(n: number): string {
   return new Intl.NumberFormat('da-DK').format(n)
 }
 
-export function defaultRange(): { from: string; to: string } {
+/** UI + backfill default lookback (2 år — providers cap'er pr. request, API chunker). */
+export const MAX_HISTORY_DAYS = 730
+
+export function defaultRange(days = MAX_HISTORY_DAYS): { from: string; to: string } {
   const to = new Date()
   const from = new Date()
-  from.setUTCDate(from.getUTCDate() - 30)
+  from.setUTCDate(from.getUTCDate() - days)
   return { from: from.toISOString(), to: to.toISOString() }
+}
+
+export function deepBackfillFrom(): string {
+  return defaultRange(MAX_HISTORY_DAYS).from
 }

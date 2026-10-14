@@ -7,6 +7,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
+// Så langt tilbage vi forsøger at hente ved backfill (providers cap'er pr. request; API chunker).
+const int MaxBackfillDays = 730;
+
 var builder = WebApplication.CreateBuilder(args);
 
 var connectionString = builder.Configuration["CONNECTION_STRING"]
@@ -59,9 +62,9 @@ var corsOrigins = (builder.Configuration["CORS_ORIGIN"] ?? "http://localhost:517
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
     p.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod()));
 
-builder.Services.AddHttpClient<CursorUsageClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
-builder.Services.AddHttpClient<OpenAiUsageClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
-builder.Services.AddHttpClient<CodexUsageClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
+builder.Services.AddHttpClient<CursorUsageClient>(c => c.Timeout = TimeSpan.FromMinutes(3));
+builder.Services.AddHttpClient<OpenAiUsageClient>(c => c.Timeout = TimeSpan.FromMinutes(3));
+builder.Services.AddHttpClient<CodexUsageClient>(c => c.Timeout = TimeSpan.FromMinutes(3));
 builder.Services.AddSingleton<CredentialProtector>();
 builder.Services.AddScoped<OrgAccessService>();
 builder.Services.AddScoped<UsageIngestService>();
@@ -123,7 +126,7 @@ static (DateTimeOffset From, DateTimeOffset To) ParseRange(HttpRequest req)
     var to = DateTimeOffset.TryParse(req.Query["to"], out var t) ? t.ToUniversalTime() : DateTimeOffset.UtcNow;
     var from = DateTimeOffset.TryParse(req.Query["from"], out var f)
         ? f.ToUniversalTime()
-        : to.AddDays(-30);
+        : to.AddDays(-MaxBackfillDays);
     return (from, to);
 }
 
@@ -216,7 +219,7 @@ app.MapPost("/api/ingest/cursor/backfill", async (ClaimsPrincipal user, Backfill
     if (conn is null) return Results.BadRequest(new { error = "Ingen Cursor-forbindelse" });
 
     var to = body.To?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
-    var from = body.From?.ToUniversalTime() ?? to.AddDays(-30);
+    var from = body.From?.ToUniversalTime() ?? to.AddDays(-MaxBackfillDays);
     var (upserted, raw) = await ingest.IngestCursorAsync(conn, from, to);
     return Results.Ok(new { upserted, rawStored = raw, from, to, connectionId = conn.Id });
 }).RequireAuthorization();
@@ -236,7 +239,7 @@ app.MapPost("/api/ingest/openai/backfill", async (ClaimsPrincipal user, Backfill
     if (conn is null) return Results.BadRequest(new { error = "Ingen OpenAI-forbindelse" });
 
     var to = body.To?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
-    var from = body.From?.ToUniversalTime() ?? to.AddDays(-30);
+    var from = body.From?.ToUniversalTime() ?? to.AddDays(-MaxBackfillDays);
     var (upserted, costs) = await ingest.IngestOpenAiAsync(conn, from, to);
     return Results.Ok(new { upserted, costRows = costs, from, to, connectionId = conn.Id });
 }).RequireAuthorization();
