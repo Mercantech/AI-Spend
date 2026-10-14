@@ -208,11 +208,52 @@ export const MAX_HISTORY_DAYS = 730
 /** Standard UI-periode for Oversigt. */
 export const DEFAULT_DASHBOARD_DAYS = 30
 
+export type RangePreset = '7d' | '30d' | '90d' | 'ytd' | '1y' | '2y'
+
+export const DEFAULT_RANGE_PRESET: RangePreset = '30d'
+
+export const RANGE_PRESET_OPTIONS: { id: RangePreset; label: string }[] = [
+  { id: '7d', label: '7d' },
+  { id: '30d', label: '30d' },
+  { id: '90d', label: '90d' },
+  { id: 'ytd', label: 'YTD' },
+  { id: '1y', label: '1 år' },
+  { id: '2y', label: '2 år' },
+]
+
+export function rangePresetLabel(preset: RangePreset): string {
+  switch (preset) {
+    case '7d':
+      return 'Seneste 7 dage'
+    case '30d':
+      return 'Seneste 30 dage'
+    case '90d':
+      return 'Seneste 90 dage'
+    case 'ytd':
+      return `År til dato (${new Date().getUTCFullYear()})`
+    case '1y':
+      return 'Seneste år'
+    case '2y':
+      return 'Seneste 2 år'
+  }
+}
+
 export function rangeFromDays(days: number): { from: string; to: string } {
   const to = new Date()
   const from = new Date()
   from.setUTCDate(from.getUTCDate() - days)
   return { from: from.toISOString(), to: to.toISOString() }
+}
+
+export function rangeFromPreset(preset: RangePreset): { from: string; to: string } {
+  const to = new Date()
+  if (preset === 'ytd') {
+    const from = new Date(Date.UTC(to.getUTCFullYear(), 0, 1, 0, 0, 0, 0))
+    return { from: from.toISOString(), to: to.toISOString() }
+  }
+  const days =
+    preset === '7d' ? 7 : preset === '30d' ? 30 : preset === '90d' ? 90 : preset === '1y' ? 365 : 730
+  return rangeFromDays(days)
 }
 
 /** @param days default 30 for UI; brug MAX_HISTORY_DAYS til backfill. */

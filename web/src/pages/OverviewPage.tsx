@@ -7,9 +7,11 @@ import { ProviderBreakdown, type ProviderStat } from '../components/ProviderBrea
 import { RangeChips } from '../components/RangeChips'
 import {
   api,
-  DEFAULT_DASHBOARD_DAYS,
-  rangeFromDays,
+  DEFAULT_RANGE_PRESET,
+  rangeFromPreset,
+  rangePresetLabel,
   type LiveMeter,
+  type RangePreset,
   type SeriesPoint,
   type UsageSummary,
 } from '../api'
@@ -71,8 +73,8 @@ function buildDaily(series: SeriesPoint[], from: string, to: string): DailyPoint
 }
 
 export function OverviewPage() {
-  const [days, setDays] = useState(DEFAULT_DASHBOARD_DAYS)
-  const range = useMemo(() => rangeFromDays(days), [days])
+  const [preset, setPreset] = useState<RangePreset>(DEFAULT_RANGE_PRESET)
+  const range = useMemo(() => rangeFromPreset(preset), [preset])
   const [summary, setSummary] = useState<UsageSummary | null>(null)
   const [modelSeries, setModelSeries] = useState<SeriesPoint[]>([])
   const [providerSeries, setProviderSeries] = useState<SeriesPoint[]>([])
@@ -115,18 +117,15 @@ export function OverviewPage() {
     [modelSeries, providerSeries, range.from, range.to],
   )
 
-  const periodLabel =
-    days === 7 ? 'Seneste 7 dage' : days === 30 ? 'Seneste 30 dage' : days === 90 ? 'Seneste 90 dage' : 'Seneste 2 år'
-
   return (
     <div className="page overview dash">
       <header className="dash-head">
         <div>
-          <p className="eyebrow">{periodLabel}</p>
+          <p className="eyebrow">{rangePresetLabel(preset)}</p>
           <h1>AI-Spend</h1>
           <p className="lede">Tokens, modeller og omkostninger — Cursor, Codex og OpenAI.</p>
         </div>
-        <RangeChips days={days} onChange={setDays} />
+        <RangeChips preset={preset} onChange={setPreset} />
       </header>
 
       {loading && !summary && <p className="muted dash-status">Henter forbrug…</p>}

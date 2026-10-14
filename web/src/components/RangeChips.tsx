@@ -1,26 +1,21 @@
-const OPTIONS: { days: number; label: string }[] = [
-  { days: 7, label: '7d' },
-  { days: 30, label: '30d' },
-  { days: 90, label: '90d' },
-  { days: 730, label: '2år' },
-]
+import { RANGE_PRESET_OPTIONS, type RangePreset } from '../api'
 
 export function RangeChips({
-  days,
+  preset,
   onChange,
 }: {
-  days: number
-  onChange: (days: number) => void
+  preset: RangePreset
+  onChange: (preset: RangePreset) => void
 }) {
   return (
     <div className="dash-chips" role="group" aria-label="Periode">
-      {OPTIONS.map((o) => (
+      {RANGE_PRESET_OPTIONS.map((o) => (
         <button
-          key={o.days}
+          key={o.id}
           type="button"
-          className={`dash-chip${days === o.days ? ' is-active' : ''}`}
-          onClick={() => onChange(o.days)}
-          aria-pressed={days === o.days}
+          className={`dash-chip${preset === o.id ? ' is-active' : ''}`}
+          onClick={() => onChange(o.id)}
+          aria-pressed={preset === o.id}
         >
           {o.label}
         </button>
