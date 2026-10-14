@@ -41,6 +41,24 @@ export interface SeriesPoint {
   cacheWriteTokens: number
   costUsd: number
   requestCount: number
+  /** cursor | openai | codex — sat af API så UI kan filtrere */
+  provider?: string | null
+}
+
+export const DASHBOARD_PROVIDERS = ['cursor', 'codex', 'openai'] as const
+export type DashboardProvider = (typeof DASHBOARD_PROVIDERS)[number]
+
+export function providerLabel(p: string): string {
+  switch (p.toLowerCase()) {
+    case 'cursor':
+      return 'Cursor'
+    case 'codex':
+      return 'Codex'
+    case 'openai':
+      return 'OpenAI'
+    default:
+      return p
+  }
 }
 
 export interface UsageEvent {

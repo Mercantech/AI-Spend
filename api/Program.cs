@@ -315,15 +315,19 @@ app.MapGet("/api/usage/series", async (ClaimsPrincipal user, Guid? organizationI
         "provider" => rows.GroupBy(r => new { r.Day, Key = DtoMaps.ProviderName(r.Provider) })
             .Select(g => new SeriesPointDto(g.Key.Key, g.Key.Day.ToString("yyyy-MM-dd"),
                 g.Sum(x => x.InputTokens), g.Sum(x => x.OutputTokens), g.Sum(x => x.CacheReadTokens),
-                g.Sum(x => x.CacheWriteTokens), g.Sum(x => x.CostCents) / 100m, g.Sum(x => x.RequestCount))),
-        "user" => rows.GroupBy(r => new { r.Day, Key = string.IsNullOrEmpty(r.UserEmail) ? "(ukendt)" : r.UserEmail })
+                g.Sum(x => x.CacheWriteTokens), g.Sum(x => x.CostCents) / 100m, g.Sum(x => x.RequestCount),
+                g.Key.Key)),
+        "user" => rows.GroupBy(r => new { r.Day, Provider = DtoMaps.ProviderName(r.Provider), Key = string.IsNullOrEmpty(r.UserEmail) ? "(ukendt)" : r.UserEmail })
             .Select(g => new SeriesPointDto(g.Key.Key, g.Key.Day.ToString("yyyy-MM-dd"),
                 g.Sum(x => x.InputTokens), g.Sum(x => x.OutputTokens), g.Sum(x => x.CacheReadTokens),
-                g.Sum(x => x.CacheWriteTokens), g.Sum(x => x.CostCents) / 100m, g.Sum(x => x.RequestCount))),
-        _ => rows.GroupBy(r => new { r.Day, Key = string.IsNullOrEmpty(r.Model) ? "(ukendt)" : r.Model })
+                g.Sum(x => x.CacheWriteTokens), g.Sum(x => x.CostCents) / 100m, g.Sum(x => x.RequestCount),
+                g.Key.Provider)),
+        // Model pr. provider, så UI kan toggle Cursor/Codex/OpenAI uden at blande modeller
+        _ => rows.GroupBy(r => new { r.Day, Provider = DtoMaps.ProviderName(r.Provider), Key = string.IsNullOrEmpty(r.Model) ? "(ukendt)" : r.Model })
             .Select(g => new SeriesPointDto(g.Key.Key, g.Key.Day.ToString("yyyy-MM-dd"),
                 g.Sum(x => x.InputTokens), g.Sum(x => x.OutputTokens), g.Sum(x => x.CacheReadTokens),
-                g.Sum(x => x.CacheWriteTokens), g.Sum(x => x.CostCents) / 100m, g.Sum(x => x.RequestCount)))
+                g.Sum(x => x.CacheWriteTokens), g.Sum(x => x.CostCents) / 100m, g.Sum(x => x.RequestCount),
+                g.Key.Provider))
     };
 
     return Results.Ok(points.OrderBy(p => p.Day).ThenBy(p => p.Key).ToList());

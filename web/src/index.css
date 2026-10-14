@@ -504,6 +504,35 @@ table.data .actions {
   color: var(--accent);
 }
 
+.dash-filters {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.dash-provider-toggles .provider-chip.is-active.provider-cursor {
+  color: #4eb8d9;
+}
+
+.dash-provider-toggles .provider-chip.is-active.provider-codex {
+  color: #6bcf8e;
+}
+
+.dash-provider-toggles .provider-chip.is-active.provider-openai {
+  color: #e8a54b;
+}
+
+.dash-provider-toggles .provider-chip:not(.is-active) {
+  opacity: 0.45;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+.dash-provider-toggles .provider-chip.is-empty:not(.is-active) {
+  opacity: 0.28;
+}
+
 .dash-status {
   margin: 0 0 1rem;
 }

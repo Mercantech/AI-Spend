@@ -13,7 +13,11 @@ public record UsageSummaryDto(
     decimal CostUsd, decimal ChargedUsd,
     long InputTokens, long OutputTokens, long CacheWriteTokens, long CacheReadTokens,
     long RequestCount, int EventCount);
-public record SeriesPointDto(string Key, string Day, long InputTokens, long OutputTokens, long CacheReadTokens, long CacheWriteTokens, decimal CostUsd, long RequestCount);
+public record SeriesPointDto(
+    string Key, string Day,
+    long InputTokens, long OutputTokens, long CacheReadTokens, long CacheWriteTokens,
+    decimal CostUsd, long RequestCount,
+    string? Provider = null);
 public record UsageEventDto(
     Guid Id, string Provider, DateTimeOffset OccurredAt, string? Model, string? UserEmail, string? Kind,
     long InputTokens, long OutputTokens, long CacheWriteTokens, long CacheReadTokens,
