@@ -84,14 +84,14 @@ export function ConnectionsPage() {
     provider === 'cursor'
       ? 'Session-cookie eller Team Admin-nøgle'
       : provider === 'codex'
-        ? 'ChatGPT session-cookie'
+        ? 'Codex auth.json eller access_token'
         : 'API-nøgle'
 
   const secretPlaceholder =
     provider === 'cursor'
       ? 'WorkosCursorSessionToken=… eller crsr_…'
       : provider === 'codex'
-        ? '__Secure-next-auth.session-token=… (eller .0 + .1)'
+        ? 'Paste ~/.codex/auth.json eller access_token'
         : 'OpenAI Admin key'
 
   return (
@@ -119,21 +119,17 @@ export function ConnectionsPage() {
       {provider === 'codex' && (
         <div className="hint-box">
           <p>
-            <strong>Codex / ChatGPT:</strong> log ind på{' '}
-            <a href="https://chatgpt.com" target="_blank" rel="noreferrer">
-              chatgpt.com
-            </a>
-            , F12 → Application → Cookies → find{' '}
-            <code>__Secure-next-auth.session-token</code> → kopiér kun kolonnen{' '}
-            <strong>Value</strong> (starter typisk med <code>eyJ…</code>). Ikke cookie-navnet.
+            <strong>Anbefalet:</strong> kør <code>codex login</code>, åbn{' '}
+            <code>%USERPROFILE%\.codex\auth.json</code> (Windows) eller{' '}
+            <code>~/.codex/auth.json</code>, og paste <em>hele filen</em> her. Vi bruger{' '}
+            <code>tokens.access_token</code> (undgår Cloudflare-blokering af browser-cookies).
           </p>
           <p>
-            Hvis den er delt i <code>.0</code> / <code>.1</code>: indsæt{' '}
-            <code>__Secure-next-auth.session-token.0=…; __Secure-next-auth.session-token.1=…</code>
+            Alternativt: kun <code>tokens.access_token</code>-værdien (JWT med tre dele — ikke den
+            lange JWE-cookie fra chatgpt.com).
           </p>
           <p>
-            Vi henter rate-limits (5t/uge/credits) + daglige token-buckets. Buckets er total tokens
-            (ikke input/output-split).
+            Session-cookie fra chatgpt.com virker ofte <em>ikke</em> fra serveren (Cloudflare 403).
           </p>
         </div>
       )}

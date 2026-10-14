@@ -61,11 +61,7 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
 
 builder.Services.AddHttpClient<CursorUsageClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
 builder.Services.AddHttpClient<OpenAiUsageClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
-builder.Services.AddHttpClient<CodexUsageClient>(c =>
-{
-    c.Timeout = TimeSpan.FromSeconds(60);
-    c.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "AI-Spend/1.0");
-});
+builder.Services.AddHttpClient<CodexUsageClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
 builder.Services.AddSingleton<CredentialProtector>();
 builder.Services.AddScoped<OrgAccessService>();
 builder.Services.AddScoped<UsageIngestService>();
