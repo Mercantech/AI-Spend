@@ -123,15 +123,17 @@ export function ConnectionsPage() {
             <a href="https://chatgpt.com" target="_blank" rel="noreferrer">
               chatgpt.com
             </a>
-            , F12 → Application → Cookies → kopiér{' '}
-            <code>__Secure-next-auth.session-token</code> (eller både <code>.0</code> og{' '}
-            <code>.1</code> hvis cookien er sharded — indsæt som{' '}
-            <code>navn=værdi; navn=værdi</code>).
+            , F12 → Application → Cookies → find{' '}
+            <code>__Secure-next-auth.session-token</code> → kopiér kun kolonnen{' '}
+            <strong>Value</strong> (starter typisk med <code>eyJ…</code>). Ikke cookie-navnet.
           </p>
           <p>
-            Vi henter rate-limits (5t/uge/credits) + daglige token-buckets fra ChatGPT-profilen.
-            Bemærk: buckets er <em>total tokens</em> (ikke input/output-split), og dagens bucket kan
-            mangle pga. OpenAI-aggregationsforsinkelse.
+            Hvis den er delt i <code>.0</code> / <code>.1</code>: indsæt{' '}
+            <code>__Secure-next-auth.session-token.0=…; __Secure-next-auth.session-token.1=…</code>
+          </p>
+          <p>
+            Vi henter rate-limits (5t/uge/credits) + daglige token-buckets. Buckets er total tokens
+            (ikke input/output-split).
           </p>
         </div>
       )}

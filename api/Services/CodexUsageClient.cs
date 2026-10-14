@@ -62,10 +62,14 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
     private async Task<(string AccessToken, string? AccountId)> ExchangeSessionAsync(
         string cookieHeader, CancellationToken ct)
     {
+        log.LogInformation("ChatGPT session exchange cookieHeaderLen={Len} preview={Preview}",
+            cookieHeader.Length, Truncate(cookieHeader.Split('=')[0] + (cookieHeader.Contains('=') ? "=…" : "")));
+
         using var req = new HttpRequestMessage(HttpMethod.Get, "https://chatgpt.com/api/auth/session");
         req.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        req.Headers.TryAddWithoutValidation("User-Agent", "AI-Spend/1.0");
+        req.Headers.TryAddWithoutValidation("User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
 
         using var res = await http.SendAsync(req, ct);
         var text = await res.Content.ReadAsStringAsync(ct);
@@ -73,12 +77,27 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
         {
             log.LogWarning("ChatGPT session failed {Status}: {Body}", (int)res.StatusCode, Truncate(text));
             throw new InvalidOperationException(
-                "ChatGPT-session ugyldig/udløbet. Log ind på chatgpt.com og kopiér cookie " +
-                "__Secure-next-auth.session-token (eller .0 + .1 shards) fra DevTools.");
+                "ChatGPT-session ugyldig/udløbet. Log ind på chatgpt.com og kopiér kun cookie-værdien for " +
+                "__Secure-next-auth.session-token (eller begge .0/.1 som navn=værdi; navn=værdi).");
+        }
+
+        if (string.IsNullOrWhiteSpace(text) || text.Trim() is "null" or "undefined" or "{}")
+        {
+            throw new InvalidOperationException(
+                "ChatGPT returnerede ingen session (null). Cookien er forkert formateret eller udløbet. " +
+                "Kopiér kun Value-feltet for __Secure-next-auth.session-token — ikke cookie-navnet. " +
+                "Hvis cookien er sharded: indsæt `__Secure-next-auth.session-token.0=…; __Secure-next-auth.session-token.1=…`.");
         }
 
         using var doc = JsonDocument.Parse(text);
         var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                $"ChatGPT-session returnerede {root.ValueKind} i stedet for et objekt. " +
+                "Tjek at cookien er den fulde Value (JWE der starter med eyJ…) uden ekstra tekst.");
+        }
+
         if (!root.TryGetProperty("accessToken", out var at) || at.ValueKind != JsonValueKind.String
             || string.IsNullOrWhiteSpace(at.GetString()))
         {
@@ -87,14 +106,14 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
         }
 
         string? accountId = null;
-        if (root.TryGetProperty("account", out var acc))
+        if (root.TryGetProperty("account", out var acc) && acc.ValueKind == JsonValueKind.Object)
         {
             if (acc.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
                 accountId = id.GetString();
             else if (acc.TryGetProperty("account_id", out var aid) && aid.ValueKind == JsonValueKind.String)
                 accountId = aid.GetString();
         }
-        if (accountId is null && root.TryGetProperty("user", out var user)
+        if (accountId is null && root.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.Object
             && user.TryGetProperty("id", out var uid) && uid.ValueKind == JsonValueKind.String)
             accountId = uid.GetString();
 
@@ -130,7 +149,8 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
     public static IReadOnlyList<CursorLiveMeterDto> ParseUsageMeters(JsonElement root)
     {
         var meters = new List<CursorLiveMeterDto>();
-        var rate = root.TryGetProperty("rate_limit", out var rl) ? rl : root;
+        if (root.ValueKind != JsonValueKind.Object) return meters;
+        var rate = root.TryGetProperty("rate_limit", out var rl) && rl.ValueKind == JsonValueKind.Object ? rl : root;
 
         if (rate.TryGetProperty("primary_window", out var primary))
             meters.Add(ParseWindow(primary, "5 timer", 18000));
@@ -190,7 +210,8 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
 
     public static (IReadOnlyList<CodexDailyBucketDto> Buckets, long? Lifetime) ParseProfileBuckets(JsonElement root)
     {
-        var stats = root.TryGetProperty("stats", out var s) ? s : root;
+        if (root.ValueKind != JsonValueKind.Object) return ([], null);
+        var stats = root.TryGetProperty("stats", out var s) && s.ValueKind == JsonValueKind.Object ? s : root;
         long? lifetime = null;
         if (stats.TryGetProperty("lifetime_tokens", out var lt) && lt.TryGetInt64(out var life))
             lifetime = life;
@@ -221,28 +242,65 @@ public sealed class CodexUsageClient(HttpClient http, ILogger<CodexUsageClient> 
 
     /// <summary>
     /// Accept bare token, single cookie assignment, or full Cookie header (sharded .0/.1).
+    /// Also cleans common paste mistakes like "VALUE CookieName" or "CookieName VALUE".
     /// </summary>
     public static string NormalizeCookieHeader(string raw)
     {
-        var c = raw.Trim();
+        var c = raw.Trim().Trim('"').Trim('\'');
         if (c.StartsWith("Cookie:", StringComparison.OrdinalIgnoreCase))
             c = c["Cookie:".Length..].Trim();
 
-        // Already a Cookie header with name=value pairs
-        if (c.Contains('=') && (
-                c.Contains("__Secure-next-auth.session-token", StringComparison.OrdinalIgnoreCase)
-                || c.Contains("next-auth.session-token", StringComparison.OrdinalIgnoreCase)))
-            return c;
+        c = StripAccidentalCookieName(c);
 
-        // Bare unsharded token value
-        if (!c.Contains('='))
-            return $"__Secure-next-auth.session-token={c}";
+        // Full Cookie header with session-token name=value (possibly sharded)
+        if (c.Contains("__Secure-next-auth.session-token", StringComparison.OrdinalIgnoreCase)
+            || c.Contains("next-auth.session-token", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = c.Split(['\r', '\n', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(p => p.Contains('='))
+                .ToList();
+            if (parts.Count > 0)
+                return string.Join("; ", parts);
+        }
 
-        // Single assignment without other cookies
-        if (c.StartsWith("__Secure-next-auth.session-token", StringComparison.OrdinalIgnoreCase)
-            || c.StartsWith("next-auth.session-token", StringComparison.OrdinalIgnoreCase))
-            return c;
+        // Bare JWE/JWT value — pick the eyJ… token if present
+        var tokens = c.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var value = tokens.FirstOrDefault(t => t.StartsWith("eyJ", StringComparison.Ordinal))
+            ?? tokens.FirstOrDefault()
+            ?? c;
+        return $"__Secure-next-auth.session-token={value}";
+    }
 
+    private static string StripAccidentalCookieName(string c)
+    {
+        const string name = "__Secure-next-auth.session-token";
+        // "eyJ… __Secure-next-auth.session-token"
+        if (c.EndsWith(name, StringComparison.OrdinalIgnoreCase))
+        {
+            var trimmed = c[..^name.Length].Trim();
+            if (trimmed.Length > 0 && !trimmed.Contains('='))
+                return trimmed;
+        }
+        // "__Secure-next-auth.session-token eyJ…"
+        if (c.StartsWith(name, StringComparison.OrdinalIgnoreCase)
+            && c.Length > name.Length
+            && c[name.Length] is ' ' or '\t')
+        {
+            var rest = c[(name.Length)..].Trim();
+            if (rest.StartsWith("eyJ", StringComparison.Ordinal) && !rest.Contains('='))
+                return rest;
+        }
+        // Same for .0 / .1 names pasted alone after value
+        foreach (var suffix in new[] { ".0", ".1" })
+        {
+            var n = name + suffix;
+            if (c.EndsWith(n, StringComparison.OrdinalIgnoreCase))
+            {
+                var trimmed = c[..^n.Length].Trim();
+                if (trimmed.Length > 0 && !trimmed.Contains('='))
+                    return trimmed;
+            }
+        }
         return c;
     }
 
