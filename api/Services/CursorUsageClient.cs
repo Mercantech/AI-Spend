@@ -29,17 +29,82 @@ public sealed record CursorLiveMeterDto(
     DateTimeOffset? ResetsAt,
     string? DisplayValue);
 
+public enum CursorCredentialKind
+{
+    TeamAdminKey,
+    SessionCookie,
+    UserApiKeyUnsupported
+}
+
 public sealed class CursorUsageClient(HttpClient http, ILogger<CursorUsageClient> log)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+    public static CursorCredentialKind DetectCredentialKind(string credential)
+    {
+        var c = credential.Trim();
+        if (LooksLikeSessionCookie(c))
+            return CursorCredentialKind.SessionCookie;
+        // User/team API keys often share crsr_ prefix — Admin call decides which works.
+        return CursorCredentialKind.TeamAdminKey;
+    }
+
+    public static bool LooksLikeSessionCookie(string credential)
+    {
+        var c = credential.Trim();
+        if (c.StartsWith("WorkosCursorSessionToken=", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (c.Contains("::", StringComparison.Ordinal) || c.Contains("%3A%3A", StringComparison.OrdinalIgnoreCase))
+            return true;
+        // Bare JWT-like session values (not crsr_ API keys)
+        if (!c.StartsWith("crsr_", StringComparison.OrdinalIgnoreCase)
+            && c.Count(ch => ch == '.') >= 2
+            && c.Length > 80)
+            return true;
+        return false;
+    }
 
     public async Task<IReadOnlyList<CursorUsageEventDto>> FetchFilteredUsageEventsAsync(
-        string apiKey,
+        string credential,
         DateTimeOffset from,
         DateTimeOffset to,
         CancellationToken ct = default)
     {
-        // Official Admin API (Enterprise). Falls back to dashboard twin path shape.
+        if (LooksLikeSessionCookie(credential))
+            return await FetchDashboardEventsAsync(credential, from, to, ct);
+
+        try
+        {
+            return await FetchAdminEventsAsync(credential, from, to, ct);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Invalid Team API Key", StringComparison.OrdinalIgnoreCase)
+                                                   || ex.Message.Contains("User API-nøgle", StringComparison.OrdinalIgnoreCase)
+                                                   || ex.Message.Contains("Team API Key", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Cursor User API-nøgler kan ikke hente usage (kun Cloud Agents). " +
+                "Til personligt forbrug: indsæt WorkosCursorSessionToken fra " +
+                "https://cursor.com/dashboard/usage → DevTools (F12) → Application → Cookies. " +
+                "Til team: brug en Team Admin API-nøgle (Enterprise).");
+        }
+    }
+
+    public async Task ValidateCredentialAsync(string credential, CancellationToken ct = default)
+    {
+        var to = DateTimeOffset.UtcNow;
+        var from = to.AddHours(-6);
+        _ = await FetchFilteredUsageEventsAsync(credential, from, to, ct);
+    }
+
+    public async Task<IReadOnlyList<CursorLiveMeterDto>> FetchLiveMetersAsync(
+        string credential, CancellationToken ct = default)
+    {
+        if (LooksLikeSessionCookie(credential))
+            return await FetchDashboardPeriodMetersAsync(credential, ct);
+        return [];
+    }
+
+    private async Task<IReadOnlyList<CursorUsageEventDto>> FetchAdminEventsAsync(
+        string apiKey, DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
+    {
         var events = new List<CursorUsageEventDto>();
         var page = 1;
         const int pageSize = 1000;
@@ -47,29 +112,33 @@ public sealed class CursorUsageClient(HttpClient http, ILogger<CursorUsageClient
         while (true)
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.cursor.com/teams/filtered-usage-events");
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            req.Headers.Authorization = BasicAuth(apiKey);
             req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            var body = new
+            req.Content = JsonBody(new
             {
                 startDate = from.ToUnixTimeMilliseconds(),
                 endDate = to.ToUnixTimeMilliseconds(),
                 page,
                 pageSize
-            };
-            req.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            });
 
             using var res = await http.SendAsync(req, ct);
             var text = await res.Content.ReadAsStringAsync(ct);
             if (!res.IsSuccessStatusCode)
             {
-                // Try org endpoint
                 if (page == 1)
                 {
                     var orgEvents = await FetchOrgEventsAsync(apiKey, from, to, ct);
                     if (orgEvents is not null) return orgEvents;
                 }
-                log.LogWarning("Cursor filtered-usage-events failed {Status}: {Body}", (int)res.StatusCode, Truncate(text));
-                throw new InvalidOperationException($"Cursor API {(int)res.StatusCode}: {Truncate(text)}");
+
+                if ((int)res.StatusCode == 401 && text.Contains("Invalid Team API Key", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        "Cursor afviste nøglen som Team API Key. User API-nøgler virker ikke her — " +
+                        "brug WorkosCursorSessionToken (cookie) til personligt forbrug, eller en Team Admin-nøgle (crsr_…).");
+
+                log.LogWarning("Cursor admin filtered-usage-events failed {Status}: {Body}", (int)res.StatusCode, Truncate(text));
+                throw new InvalidOperationException($"Cursor Admin API {(int)res.StatusCode}: {Truncate(text)}");
             }
 
             using var doc = JsonDocument.Parse(text);
@@ -97,15 +166,14 @@ public sealed class CursorUsageClient(HttpClient http, ILogger<CursorUsageClient
         while (true)
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.cursor.com/organizations/filtered-usage-events");
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-            var body = new
+            req.Headers.Authorization = BasicAuth(apiKey);
+            req.Content = JsonBody(new
             {
                 startDate = from.ToUnixTimeMilliseconds(),
                 endDate = to.ToUnixTimeMilliseconds(),
                 page,
                 pageSize
-            };
-            req.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            });
             using var res = await http.SendAsync(req, ct);
             var text = await res.Content.ReadAsStringAsync(ct);
             if (!res.IsSuccessStatusCode)
@@ -122,20 +190,121 @@ public sealed class CursorUsageClient(HttpClient http, ILogger<CursorUsageClient
         return events;
     }
 
-    public async Task<IReadOnlyList<CursorLiveMeterDto>> FetchCurrentPeriodUsageAsync(
-        string accessToken, CancellationToken ct = default)
+    private async Task<IReadOnlyList<CursorUsageEventDto>> FetchDashboardEventsAsync(
+        string sessionToken, DateTimeOffset from, DateTimeOffset to, CancellationToken ct)
     {
-        using var req = new HttpRequestMessage(HttpMethod.Post,
-            "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        req.Headers.TryAddWithoutValidation("Connect-Protocol-Version", "1");
-        req.Content = new StringContent("{}", Encoding.UTF8, "application/json");
-        using var res = await http.SendAsync(req, ct);
-        var text = await res.Content.ReadAsStringAsync(ct);
-        if (!res.IsSuccessStatusCode)
-            throw new InvalidOperationException($"Cursor period usage {(int)res.StatusCode}: {Truncate(text)}");
-        using var doc = JsonDocument.Parse(text);
-        return ParsePeriodMeters(doc.RootElement);
+        var cookie = NormalizeSessionCookie(sessionToken);
+        var events = new List<CursorUsageEventDto>();
+        var page = 1;
+        const int pageSize = 1000;
+        int? total = null;
+
+        while (true)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post,
+                "https://cursor.com/api/dashboard/get-filtered-usage-events");
+            req.Headers.TryAddWithoutValidation("Cookie", $"WorkosCursorSessionToken={cookie}");
+            req.Headers.TryAddWithoutValidation("Origin", "https://cursor.com");
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            // Dashboard expects start/end as millisecond strings
+            req.Content = JsonBody(new
+            {
+                startDate = from.ToUnixTimeMilliseconds().ToString(),
+                endDate = to.ToUnixTimeMilliseconds().ToString(),
+                page,
+                pageSize
+            });
+
+            using var res = await http.SendAsync(req, ct);
+            var text = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+            {
+                log.LogWarning("Cursor dashboard events failed {Status}: {Body}", (int)res.StatusCode, Truncate(text));
+                if ((int)res.StatusCode is 401 or 403)
+                    throw new InvalidOperationException(
+                        "Cursor-session ugyldig/udløbet. Hent en frisk WorkosCursorSessionToken fra " +
+                        "cursor.com/dashboard/usage (DevTools → Application → Cookies).");
+                throw new InvalidOperationException($"Cursor dashboard {(int)res.StatusCode}: {Truncate(text)}");
+            }
+
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("totalUsageEventsCount", out var tuc) && tuc.TryGetInt32(out var n))
+                total = n;
+
+            var batch = ParseEventArray(root);
+            events.AddRange(batch);
+
+            if (batch.Count == 0) break;
+            if (total is int tot && events.Count >= tot) break;
+            if (batch.Count < pageSize) break;
+            page++;
+        }
+
+        return events;
+    }
+
+    private async Task<IReadOnlyList<CursorLiveMeterDto>> FetchDashboardPeriodMetersAsync(
+        string sessionToken, CancellationToken ct)
+    {
+        var cookie = NormalizeSessionCookie(sessionToken);
+
+        // Prefer dashboard get-current-period-usage (same shape as Connect-RPC)
+        using (var req = new HttpRequestMessage(HttpMethod.Post,
+                   "https://cursor.com/api/dashboard/get-current-period-usage"))
+        {
+            req.Headers.TryAddWithoutValidation("Cookie", $"WorkosCursorSessionToken={cookie}");
+            req.Headers.TryAddWithoutValidation("Origin", "https://cursor.com");
+            req.Content = JsonBody(new { });
+            using var res = await http.SendAsync(req, ct);
+            if (res.IsSuccessStatusCode)
+            {
+                var text = await res.Content.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(text);
+                var meters = ParsePeriodMeters(doc.RootElement);
+                if (meters.Count > 0) return meters;
+            }
+        }
+
+        using var summaryReq = new HttpRequestMessage(HttpMethod.Get, "https://cursor.com/api/usage-summary");
+        summaryReq.Headers.TryAddWithoutValidation("Cookie", $"WorkosCursorSessionToken={cookie}");
+        using var summaryRes = await http.SendAsync(summaryReq, ct);
+        if (!summaryRes.IsSuccessStatusCode) return [];
+        var summaryText = await summaryRes.Content.ReadAsStringAsync(ct);
+        using var summaryDoc = JsonDocument.Parse(summaryText);
+        return ParseUsageSummaryMeters(summaryDoc.RootElement);
+    }
+
+    public static IReadOnlyList<CursorLiveMeterDto> ParseUsageSummaryMeters(JsonElement root)
+    {
+        var meters = new List<CursorLiveMeterDto>();
+        DateTimeOffset? reset = null;
+        if (root.TryGetProperty("billingCycleEnd", out var bce))
+            reset = ReadUnixFlexible(bce);
+
+        if (root.TryGetProperty("individualUsage", out var ind) && ind.TryGetProperty("plan", out var plan))
+        {
+            if (plan.TryGetProperty("autoPercentUsed", out var auto))
+                meters.Add(new("Cursor-modeller", auto.GetDouble(), reset, null));
+            if (plan.TryGetProperty("apiPercentUsed", out var api))
+                meters.Add(new("Andre modeller", api.GetDouble(), reset, null));
+            if (meters.Count == 0 && plan.TryGetProperty("totalPercentUsed", out var total))
+                meters.Add(new("Måned", total.GetDouble(), reset, null));
+        }
+
+        if (root.TryGetProperty("individualUsage", out var ind2)
+            && ind2.TryGetProperty("onDemand", out var od)
+            && od.TryGetProperty("enabled", out var en) && en.ValueKind == JsonValueKind.True)
+        {
+            var used = ReadDecimal(od, "used");
+            var limit = ReadDecimal(od, "limit");
+            if (limit > 0)
+                meters.Add(new("Spend", (double)(used / limit * 100), reset, $"${used / 100:0.##} / ${limit / 100:0.##}"));
+            else if (used > 0)
+                meters.Add(new("Spend", 0, reset, $"${used / 100:0.##}"));
+        }
+
+        return meters;
     }
 
     public static IReadOnlyList<CursorUsageEventDto> ParseEventArray(JsonElement root)
@@ -192,7 +361,7 @@ public sealed class CursorUsageClient(HttpClient http, ILogger<CursorUsageClient
 
         var externalId = GetString(item, "id")
             ?? GetString(item, "eventId")
-            ?? HashKey($"{ts:o}|{model}|{email}|{input}|{output}|{charged}|{conversationId}");
+            ?? HashKey($"{ts:o}|{model}|{email}|{input}|{output}|{charged}|{conversationId}|{kind}");
 
         return new CursorUsageEventDto(
             externalId, ts, model, email, kind, conversationId, isTokenBased,
@@ -241,6 +410,22 @@ public sealed class CursorUsageClient(HttpClient http, ILogger<CursorUsageClient
         }
 
         return meters;
+    }
+
+    private static AuthenticationHeaderValue BasicAuth(string apiKey) =>
+        new("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{apiKey}:")));
+
+    private static StringContent JsonBody(object body) =>
+        new(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+
+    private static string NormalizeSessionCookie(string raw)
+    {
+        var c = raw.Trim();
+        // Allow pasting "WorkosCursorSessionToken=..." or URL-encoded form
+        if (c.StartsWith("WorkosCursorSessionToken=", StringComparison.OrdinalIgnoreCase))
+            c = c["WorkosCursorSessionToken=".Length..];
+        // Cookie header values with :: are fine; if user pasted decoded JWT after user_id::
+        return c;
     }
 
     private static DateTimeOffset ReadTimestamp(JsonElement item)

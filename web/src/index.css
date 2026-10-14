@@ -229,6 +229,35 @@ button.danger {
   color: var(--ok);
 }
 
+.hint-box {
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  margin-bottom: 1.25rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.hint-box p {
+  margin: 0 0 0.65rem;
+}
+
+.hint-box p:last-child {
+  margin-bottom: 0;
+}
+
+.hint-box code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  color: var(--accent);
+}
+
+.hint-box strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 table.data {
   width: 100%;
   border-collapse: collapse;

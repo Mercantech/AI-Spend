@@ -22,6 +22,17 @@ public sealed class UsageIngestService(
 
         var apiKey = protector.Decrypt(connection.EncryptedCredential);
         var events = await cursor.FetchFilteredUsageEventsAsync(apiKey, from, to, ct);
+        try
+        {
+            var meters = await cursor.FetchLiveMetersAsync(apiKey, ct);
+            if (meters.Count > 0)
+                await UpsertLiveMetersAsync(connection.OrganizationId, ProviderType.Cursor, meters, ct);
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Cursor live meters kunne ikke hentes");
+        }
+
         var upserted = 0;
         var rawStored = 0;
 

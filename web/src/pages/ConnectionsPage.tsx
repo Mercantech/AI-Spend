@@ -33,9 +33,9 @@ export function ConnectionsPage() {
       setApiKey('')
       setLabel('')
       await reload()
-      setStatus('Forbindelse gemt.')
+      setStatus('Forbindelse gemt og valideret.')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Fejl')
+      setError(parseErr(err))
     } finally {
       setBusy(false)
     }
@@ -55,7 +55,7 @@ export function ConnectionsPage() {
       }
       await reload()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Fejl')
+      setError(parseErr(err))
     } finally {
       setBusy(false)
     }
@@ -68,7 +68,7 @@ export function ConnectionsPage() {
       await api.deleteConnection(c.id)
       await reload()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Fejl')
+      setError(parseErr(err))
     } finally {
       setBusy(false)
     }
@@ -79,9 +79,26 @@ export function ConnectionsPage() {
       <header className="page-head">
         <h1>Forbindelser</h1>
         <p className="lede">
-          Cursor Admin API-nøgle eller OpenAI Admin-nøgle. Nøgler gemmes krypteret på serveren.
+          Nøgler gemmes krypteret på serveren. Cursor User API-nøgler virker <em>ikke</em> til usage.
         </p>
       </header>
+
+      {provider === 'cursor' && (
+        <div className="hint-box">
+          <p>
+            <strong>Personligt Cursor-forbrug:</strong> åbn{' '}
+            <a href="https://cursor.com/dashboard/usage" target="_blank" rel="noreferrer">
+              cursor.com/dashboard/usage
+            </a>
+            , tryk F12 → Application → Cookies → kopiér værdien af{' '}
+            <code>WorkosCursorSessionToken</code> og indsæt den herunder.
+          </p>
+          <p>
+            <strong>Team (Enterprise):</strong> brug en Team Admin API-nøgle (`crsr_…`) fra Cursor
+            Dashboard → Settings → API Keys — ikke en User API-nøgle.
+          </p>
+        </div>
+      )}
 
       <form className="conn-form" onSubmit={onSubmit}>
         <label>
@@ -96,13 +113,17 @@ export function ConnectionsPage() {
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Valgfri" />
         </label>
         <label className="grow">
-          API-nøgle
+          {provider === 'cursor' ? 'Session-cookie eller Team Admin-nøgle' : 'API-nøgle'}
           <input
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             required
-            placeholder={provider === 'cursor' ? 'Cursor Admin API key' : 'OpenAI Admin key'}
+            placeholder={
+              provider === 'cursor'
+                ? 'WorkosCursorSessionToken=… eller crsr_…'
+                : 'OpenAI Admin key'
+            }
             autoComplete="off"
           />
         </label>
@@ -154,4 +175,15 @@ export function ConnectionsPage() {
       </table>
     </div>
   )
+}
+
+function parseErr(err: unknown): string {
+  if (!(err instanceof Error)) return 'Fejl'
+  try {
+    const j = JSON.parse(err.message) as { error?: string }
+    if (j.error) return j.error
+  } catch {
+    /* plain text */
+  }
+  return err.message
 }

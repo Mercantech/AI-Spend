@@ -155,7 +155,7 @@ app.MapGet("/api/connections", async (ClaimsPrincipal user, Guid? organizationId
 }).RequireAuthorization();
 
 app.MapPost("/api/connections", async (ClaimsPrincipal user, CreateConnectionRequest body, Guid? organizationId,
-    OrgAccessService orgs, AppDbContext db, CredentialProtector protector) =>
+    OrgAccessService orgs, AppDbContext db, CredentialProtector protector, CursorUsageClient cursorClient) =>
 {
     var sub = RequireUserSub(user);
     var org = await orgs.GetOrgForUserAsync(sub, organizationId)
@@ -166,13 +166,17 @@ app.MapPost("/api/connections", async (ClaimsPrincipal user, CreateConnectionReq
         return Results.BadRequest(new { error = "ApiKey er påkrævet" });
 
     var provider = DtoMaps.ParseProvider(body.Provider);
+    var secret = body.ApiKey.Trim();
+    if (provider == ProviderType.Cursor)
+        await cursorClient.ValidateCredentialAsync(secret);
+
     var conn = new ProviderConnection
     {
         OrganizationId = org.Id,
         Provider = provider,
         Scope = DtoMaps.ParseScope(body.Scope),
         Label = string.IsNullOrWhiteSpace(body.Label) ? provider.ToString() : body.Label.Trim(),
-        EncryptedCredential = protector.Encrypt(body.ApiKey.Trim()),
+        EncryptedCredential = protector.Encrypt(secret),
         IsActive = true
     };
     db.ProviderConnections.Add(conn);
