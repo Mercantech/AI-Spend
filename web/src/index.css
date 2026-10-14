@@ -574,6 +574,11 @@ table.data .actions {
   font-variant-numeric: tabular-nums;
 }
 
+.token-count {
+  cursor: help;
+  border-bottom: 1px dotted color-mix(in srgb, var(--muted) 55%, transparent);
+}
+
 .dash-section {
   margin-bottom: 2rem;
 }

@@ -1,4 +1,5 @@
-import { formatTokens, formatUsd } from '../api'
+import { formatUsd } from '../api'
+import { TokenCount } from './TokenCount'
 
 export type ModelStat = {
   model: string
@@ -54,9 +55,15 @@ export function ModelLeaderboard({ rows }: { rows: ModelStat[] }) {
                 <i className="dash-share-fill model" style={{ width: `${shareBy * 100}%` }} />
               </div>
               <div className="dash-model-foot">
-                <span>in {formatTokens(r.input)}</span>
-                <span>out {formatTokens(r.output)}</span>
-                <span>{formatTokens(r.requests)} req</span>
+                <span>
+                  in <TokenCount value={r.input} />
+                </span>
+                <span>
+                  out <TokenCount value={r.output} />
+                </span>
+                <span>
+                  <TokenCount value={r.requests} suffix="req" />
+                </span>
               </div>
             </div>
           </li>

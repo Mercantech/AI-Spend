@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { formatTokens, formatUsd, type UsageSummary } from '../api'
+import { formatUsd, type UsageSummary } from '../api'
+import { TokenCount } from './TokenCount'
 
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false)
@@ -51,7 +52,9 @@ export function KpiHero({ summary }: { summary: UsageSummary }) {
     <section className="dash-kpi">
       <div className="dash-kpi-primary">
         <span className="dash-kpi-label">Omkostning</span>
-        <strong className="dash-kpi-cost">{formatUsd(cost)}</strong>
+        <strong className="dash-kpi-cost" title={formatUsd(summary.costUsd)}>
+          {formatUsd(cost)}
+        </strong>
         {summary.chargedUsd > 0 && summary.chargedUsd !== summary.costUsd && (
           <span className="dash-kpi-sub">Charged {formatUsd(summary.chargedUsd)}</span>
         )}
@@ -59,22 +62,33 @@ export function KpiHero({ summary }: { summary: UsageSummary }) {
       <div className="dash-kpi-grid">
         <div>
           <span className="dash-kpi-label">Input tokens</span>
-          <strong>{formatTokens(Math.round(input))}</strong>
+          <strong>
+            <TokenCount value={Math.round(input)} exact={summary.inputTokens} />
+          </strong>
         </div>
         <div>
           <span className="dash-kpi-label">Output tokens</span>
-          <strong>{formatTokens(Math.round(output))}</strong>
+          <strong>
+            <TokenCount value={Math.round(output)} exact={summary.outputTokens} />
+          </strong>
         </div>
         <div>
           <span className="dash-kpi-label">Events</span>
-          <strong>{formatTokens(Math.round(events))}</strong>
+          <strong>
+            <TokenCount value={Math.round(events)} exact={summary.eventCount} />
+          </strong>
         </div>
         <div>
           <span className="dash-kpi-label">Cache hit</span>
           <strong>{cacheHit.toFixed(1)}%</strong>
           <span className="dash-kpi-sub">
-            {formatTokens(summary.cacheReadTokens)} read
-            {summary.cacheWriteTokens > 0 ? ` · ${formatTokens(summary.cacheWriteTokens)} write` : ''}
+            <TokenCount value={summary.cacheReadTokens} suffix="read" />
+            {summary.cacheWriteTokens > 0 && (
+              <>
+                {' · '}
+                <TokenCount value={summary.cacheWriteTokens} suffix="write" />
+              </>
+            )}
           </span>
         </div>
       </div>

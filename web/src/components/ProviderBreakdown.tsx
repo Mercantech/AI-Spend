@@ -1,4 +1,5 @@
-import { formatTokens, formatUsd } from '../api'
+import { formatUsd } from '../api'
+import { TokenCount } from './TokenCount'
 
 export type ProviderStat = {
   provider: string
@@ -35,7 +36,7 @@ export function ProviderBreakdown({ rows }: { rows: ProviderStat[] }) {
             <div className="dash-provider-head">
               <span className="dash-provider-name">{label(r.provider)}</span>
               <span className="dash-provider-meta">
-                {formatUsd(r.cost)} · {formatTokens(tokens)} tok
+                {formatUsd(r.cost)} · <TokenCount value={tokens} suffix="tok" />
               </span>
             </div>
             <div className="dash-share" aria-hidden>
@@ -43,7 +44,9 @@ export function ProviderBreakdown({ rows }: { rows: ProviderStat[] }) {
             </div>
             <div className="dash-provider-foot">
               <span>{tokenShare.toFixed(0)}% af tokens</span>
-              <span>{formatTokens(r.requests)} req</span>
+              <span>
+                <TokenCount value={r.requests} suffix="req" />
+              </span>
             </div>
           </li>
         )

@@ -1,5 +1,5 @@
 import { useId, useMemo, useState } from 'react'
-import { formatTokens, formatUsd } from '../api'
+import { formatTokens, formatTokensCompact, formatUsd } from '../api'
 
 export type DailyPoint = {
   day: string
@@ -149,8 +149,8 @@ export function DailyUsageChart({ days }: { days: DailyPoint[] }) {
         >
           <strong>{active.day}</strong>
           <div>Cost {formatUsd(active.cost)}</div>
-          <div>In {formatTokens(active.input)}</div>
-          <div>Out {formatTokens(active.output)}</div>
+          <div title={formatTokens(active.input)}>In {formatTokensCompact(active.input)}</div>
+          <div title={formatTokens(active.output)}>Out {formatTokensCompact(active.output)}</div>
         </div>
       )}
     </div>

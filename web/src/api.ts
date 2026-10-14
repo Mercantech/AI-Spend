@@ -170,8 +170,36 @@ export function formatUsd(n: number): string {
   }).format(n)
 }
 
+/** Fuldt tal med danske tusindtalsseparatorer (fx 365.994.345). */
 export function formatTokens(n: number): string {
-  return new Intl.NumberFormat('da-DK').format(n)
+  return new Intl.NumberFormat('da-DK').format(Math.round(n))
+}
+
+/**
+ * Kompakt, læsbart token-tal: 12,4k · 7,0 mio. · 1,22 mia.
+ * Brug sammen med title={formatTokens(n)} til hover med præcist tal.
+ */
+export function formatTokensCompact(n: number): string {
+  const rounded = Math.round(n)
+  const abs = Math.abs(rounded)
+  const sign = rounded < 0 ? '−' : ''
+  const fmt = (v: number, digits: number) =>
+    new Intl.NumberFormat('da-DK', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: digits,
+    }).format(v)
+
+  if (abs < 10_000) return sign + formatTokens(abs)
+  if (abs < 1_000_000) {
+    const v = abs / 1_000
+    return `${sign}${fmt(v, v >= 100 ? 0 : 1)}k`
+  }
+  if (abs < 1_000_000_000) {
+    const v = abs / 1_000_000
+    return `${sign}${fmt(v, v >= 100 ? 0 : 1)} mio.`
+  }
+  const v = abs / 1_000_000_000
+  return `${sign}${fmt(v, 2)} mia.`
 }
 
 /** Max lookback til deep backfill (2 år — providers cap'er pr. request, API chunker). */
