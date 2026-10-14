@@ -1,0 +1,64 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aispend}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-aispend}
+    volumes: [aispend-db:/var/lib/postgresql/data]
+    networks: [default]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aispend} -d ${POSTGRES_DB:-aispend}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      CONNECTION_STRING: Host=db;Port=5432;Database=${POSTGRES_DB:-aispend};Username=${POSTGRES_USER:-aispend};Password=${POSTGRES_PASSWORD}
+      AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.mercantec.tech}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-mercantec-apps}
+      JWKS_URI: ${JWKS_URI:-https://auth.mercantec.tech/.well-known/jwks.json}
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://ai-spend.mags.dk}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?Set CREDENTIAL_ENCRYPTION_KEY}
+      ASPNETCORE_URLS: http://+:8080
+      DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE: "false"
+    # Unikt alias: web er også på dokploy-network, hvor generisk "api" kolliderer.
+    networks:
+      default:
+        aliases: [aispend-api]
+
+  web:
+    build:
+      context: ./web
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        VITE_AUTH_CLIENT_ID: ${VITE_AUTH_CLIENT_ID:-ai-spend-web}
+        VITE_AUTH_ISSUER: ${VITE_AUTH_ISSUER:-https://auth.mercantec.tech}
+    restart: unless-stopped
+    depends_on: [api]
+    environment:
+      AISPEND_API_URL: http://aispend-api:8080
+    networks: [default, dokploy-network]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: dokploy-network
+      traefik.http.routers.aispend-prod.rule: Host(`${AISPEND_HOST:?Set AISPEND_HOST}`)
+      traefik.http.services.aispend-prod.loadbalancer.server.port: "3000"
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${AISPEND_NETWORK_SUBNET:?Set a free AISPEND_NETWORK_SUBNET}
+  dokploy-network:
+    external: true
+
+volumes:
+  aispend-db:
