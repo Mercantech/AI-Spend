@@ -1,18 +1,81 @@
 import { useEffect, useMemo, useState } from 'react'
+import { DailyUsageChart, type DailyPoint } from '../components/DailyUsageChart'
+import { KpiHero } from '../components/KpiHero'
+import { MeterPanel } from '../components/MeterPanel'
+import { ModelLeaderboard, type ModelStat } from '../components/ModelLeaderboard'
+import { ProviderBreakdown, type ProviderStat } from '../components/ProviderBreakdown'
+import { RangeChips } from '../components/RangeChips'
 import {
   api,
-  defaultRange,
-  formatTokens,
-  formatUsd,
+  DEFAULT_DASHBOARD_DAYS,
+  rangeFromDays,
   type LiveMeter,
   type SeriesPoint,
   type UsageSummary,
 } from '../api'
 
+function eachUtcDay(fromIso: string, toIso: string): string[] {
+  const out: string[] = []
+  const cur = new Date(fromIso)
+  cur.setUTCHours(0, 0, 0, 0)
+  const end = new Date(toIso)
+  end.setUTCHours(0, 0, 0, 0)
+  while (cur <= end) {
+    out.push(cur.toISOString().slice(0, 10))
+    cur.setUTCDate(cur.getUTCDate() + 1)
+  }
+  return out
+}
+
+function aggregateModels(series: SeriesPoint[]): ModelStat[] {
+  const map = new Map<string, ModelStat>()
+  for (const p of series) {
+    const cur = map.get(p.key) ?? { model: p.key, input: 0, output: 0, cost: 0, requests: 0 }
+    cur.input += p.inputTokens
+    cur.output += p.outputTokens
+    cur.cost += p.costUsd
+    cur.requests += p.requestCount
+    map.set(p.key, cur)
+  }
+  return [...map.values()]
+}
+
+function aggregateProviders(series: SeriesPoint[]): ProviderStat[] {
+  const map = new Map<string, ProviderStat>()
+  for (const p of series) {
+    const key = p.key || 'unknown'
+    const cur = map.get(key) ?? { provider: key, input: 0, output: 0, cost: 0, requests: 0 }
+    cur.input += p.inputTokens
+    cur.output += p.outputTokens
+    cur.cost += p.costUsd
+    cur.requests += p.requestCount
+    map.set(key, cur)
+  }
+  return [...map.values()].sort((a, b) => b.cost - a.cost || b.input - a.input)
+}
+
+function buildDaily(series: SeriesPoint[], from: string, to: string): DailyPoint[] {
+  const byDay = new Map<string, DailyPoint>()
+  for (const day of eachUtcDay(from, to)) {
+    byDay.set(day, { day, input: 0, output: 0, cost: 0 })
+  }
+  for (const p of series) {
+    const day = p.day.slice(0, 10)
+    const cur = byDay.get(day) ?? { day, input: 0, output: 0, cost: 0 }
+    cur.input += p.inputTokens
+    cur.output += p.outputTokens
+    cur.cost += p.costUsd
+    byDay.set(day, cur)
+  }
+  return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day))
+}
+
 export function OverviewPage() {
-  const range = useMemo(() => defaultRange(), [])
+  const [days, setDays] = useState(DEFAULT_DASHBOARD_DAYS)
+  const range = useMemo(() => rangeFromDays(days), [days])
   const [summary, setSummary] = useState<UsageSummary | null>(null)
-  const [series, setSeries] = useState<SeriesPoint[]>([])
+  const [modelSeries, setModelSeries] = useState<SeriesPoint[]>([])
+  const [providerSeries, setProviderSeries] = useState<SeriesPoint[]>([])
   const [meters, setMeters] = useState<LiveMeter[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -23,12 +86,14 @@ export function OverviewPage() {
     Promise.all([
       api.summary(range.from, range.to),
       api.series(range.from, range.to, 'model'),
+      api.series(range.from, range.to, 'provider'),
       api.meters(),
     ])
-      .then(([s, ser, m]) => {
+      .then(([s, models, providers, m]) => {
         if (cancelled) return
         setSummary(s)
-        setSeries(ser)
+        setModelSeries(models)
+        setProviderSeries(providers)
         setMeters(m)
         setError(null)
       })
@@ -43,144 +108,56 @@ export function OverviewPage() {
     }
   }, [range.from, range.to])
 
-  const byModel = useMemo(() => {
-    const map = new Map<string, { input: number; output: number; cost: number; requests: number }>()
-    for (const p of series) {
-      const cur = map.get(p.key) ?? { input: 0, output: 0, cost: 0, requests: 0 }
-      cur.input += p.inputTokens
-      cur.output += p.outputTokens
-      cur.cost += p.costUsd
-      cur.requests += p.requestCount
-      map.set(p.key, cur)
-    }
-    return [...map.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].input - a[1].input)
-  }, [series])
+  const models = useMemo(() => aggregateModels(modelSeries), [modelSeries])
+  const providers = useMemo(() => aggregateProviders(providerSeries), [providerSeries])
+  const daily = useMemo(
+    () => buildDaily(modelSeries.length ? modelSeries : providerSeries, range.from, range.to),
+    [modelSeries, providerSeries, range.from, range.to],
+  )
 
-  const maxDayTokens = useMemo(() => {
-    const byDay = new Map<string, number>()
-    for (const p of series) {
-      byDay.set(p.day, (byDay.get(p.day) ?? 0) + p.inputTokens + p.outputTokens)
-    }
-    return Math.max(1, ...byDay.values())
-  }, [series])
-
-  const dayBars = useMemo(() => {
-    const byDay = new Map<string, { input: number; output: number }>()
-    for (const p of series) {
-      const cur = byDay.get(p.day) ?? { input: 0, output: 0 }
-      cur.input += p.inputTokens
-      cur.output += p.outputTokens
-      byDay.set(p.day, cur)
-    }
-    return [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-  }, [series])
-
-  if (loading) return <p className="muted">Henter forbrug…</p>
-  if (error) return <p className="error">{error}</p>
+  const periodLabel =
+    days === 7 ? 'Seneste 7 dage' : days === 30 ? 'Seneste 30 dage' : days === 90 ? 'Seneste 90 dage' : 'Seneste 2 år'
 
   return (
-    <div className="page overview">
-      <section className="hero-spend">
-        <p className="eyebrow">Seneste 30 dage</p>
-        <h1>AI-Spend</h1>
-        <p className="lede">Tokens, modeller og omkostninger — samlet for Cursor og OpenAI.</p>
-        <div className="stat-row">
-          <div>
-            <span className="stat-label">Omkostning</span>
-            <strong>{formatUsd(summary?.costUsd ?? 0)}</strong>
-          </div>
-          <div>
-            <span className="stat-label">Input tokens</span>
-            <strong>{formatTokens(summary?.inputTokens ?? 0)}</strong>
-          </div>
-          <div>
-            <span className="stat-label">Output tokens</span>
-            <strong>{formatTokens(summary?.outputTokens ?? 0)}</strong>
-          </div>
-          <div>
-            <span className="stat-label">Events</span>
-            <strong>{formatTokens(summary?.eventCount ?? 0)}</strong>
-          </div>
+    <div className="page overview dash">
+      <header className="dash-head">
+        <div>
+          <p className="eyebrow">{periodLabel}</p>
+          <h1>AI-Spend</h1>
+          <p className="lede">Tokens, modeller og omkostninger — Cursor, Codex og OpenAI.</p>
         </div>
-      </section>
+        <RangeChips days={days} onChange={setDays} />
+      </header>
 
-      {meters.length > 0 && (
-        <section>
-          <h2>Live meters</h2>
-          <div className="meter-grid">
-            {meters.map((m) => (
-              <div key={`${m.provider}-${m.label}`} className="meter">
-                <div className="meter-head">
-                  <span>{m.provider}</span>
-                  <span>{m.label}</span>
-                </div>
-                <div className="meter-bar">
-                  <i style={{ width: `${Math.min(100, m.usedPercent)}%` }} />
-                </div>
-                <div className="meter-foot">
-                  <span>{m.usedPercent.toFixed(1)}%</span>
-                  {m.displayValue && <span>{m.displayValue}</span>}
-                </div>
-              </div>
-            ))}
+      {loading && !summary && <p className="muted dash-status">Henter forbrug…</p>}
+      {error && <p className="error dash-status">{error}</p>}
+
+      {summary && (
+        <>
+          <KpiHero summary={summary} />
+
+          <section className="dash-section">
+            <h2>Forbrug pr. dag</h2>
+            <DailyUsageChart days={daily} />
+          </section>
+
+          <div className="dash-split">
+            <section className="dash-section">
+              <h2>Providers</h2>
+              <ProviderBreakdown rows={providers} />
+            </section>
+            <section className="dash-section">
+              <h2>Live meters</h2>
+              <MeterPanel meters={meters} />
+            </section>
           </div>
-        </section>
+
+          <section className="dash-section">
+            <h2>Modeller</h2>
+            <ModelLeaderboard rows={models} />
+          </section>
+        </>
       )}
-
-      <section>
-        <h2>Tokens pr. dag</h2>
-        <div className="spark">
-          {dayBars.map(([day, v]) => {
-            const total = v.input + v.output
-            const h = (total / maxDayTokens) * 100
-            const inPct = total ? (v.input / total) * 100 : 50
-            return (
-              <div key={day} className="spark-col" title={`${day}: ${formatTokens(total)}`}>
-                <div className="spark-bar" style={{ height: `${Math.max(4, h)}%` }}>
-                  <i className="in" style={{ height: `${inPct}%` }} />
-                  <i className="out" style={{ height: `${100 - inPct}%` }} />
-                </div>
-              </div>
-            )
-          })}
-        </div>
-        <p className="muted spark-legend">
-          <span className="dot in" /> input <span className="dot out" /> output
-        </p>
-      </section>
-
-      <section>
-        <h2>Modeller</h2>
-        <table className="data">
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th>Input</th>
-              <th>Output</th>
-              <th>Requests</th>
-              <th>Cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            {byModel.map(([model, v]) => (
-              <tr key={model}>
-                <td>{model}</td>
-                <td>{formatTokens(v.input)}</td>
-                <td>{formatTokens(v.output)}</td>
-                <td>{formatTokens(v.requests)}</td>
-                <td>{formatUsd(v.cost)}</td>
-              </tr>
-            ))}
-            {byModel.length === 0 && (
-              <tr>
-                <td colSpan={5} className="muted">
-                  Ingen data endnu — tilføj en Cursor/OpenAI-forbindelse.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </section>
     </div>
   )
 }
