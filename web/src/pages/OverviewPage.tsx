@@ -233,7 +233,7 @@ export function OverviewPage() {
     <div className="page overview dash">
       <header className="dash-head">
         <div>
-          <p className="eyebrow">{rangePresetLabel(preset)}</p>
+          <p className="eyebrow">{rangePresetLabel(preset, range)}</p>
           <h1>AI-Spend</h1>
           <p className="lede">Tokens, modeller og omkostninger — Cursor, Codex og OpenAI.</p>
         </div>

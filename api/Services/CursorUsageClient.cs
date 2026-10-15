@@ -398,9 +398,13 @@ public sealed class CursorUsageClient(HttpClient http, ILogger<CursorUsageClient
         var fee = ReadDecimal(item, "cursorTokenFee", "cursor_token_fee");
         var reqCost = ReadDecimal(item, "requestsCosts", "requestCosts", "requests_costs");
 
-        var externalId = GetString(item, "id")
-            ?? GetString(item, "eventId")
-            ?? HashKey($"{ts:o}|{model}|{email}|{input}|{output}|{charged}|{conversationId}|{kind}");
+        // Stabil fingerprint — undgå dubletter når API skifter mellem id og uden id.
+        var fingerprint =
+            $"{ts.ToUnixTimeMilliseconds()}|{model}|{conversationId}|{input}|{output}|{cacheWrite}|{cacheRead}|{kind}";
+        var apiId = GetString(item, "id") ?? GetString(item, "eventId");
+        var externalId = apiId is not null
+            ? $"cur:{apiId}"
+            : HashKey(fingerprint);
 
         return new CursorUsageEventDto(
             externalId, ts, model, email, kind, conversationId, isTokenBased,

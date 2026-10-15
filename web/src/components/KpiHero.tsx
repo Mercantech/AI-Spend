@@ -40,7 +40,9 @@ function useCountUp(target: number, durationMs = 700): number {
 }
 
 export function KpiHero({ summary }: { summary: UsageSummary }) {
-  const totalExact = summary.inputTokens + summary.outputTokens
+  // Matcher Cursor Usage: Total = input + output + cache read + cache write
+  const totalExact =
+    summary.inputTokens + summary.outputTokens + summary.cacheReadTokens + summary.cacheWriteTokens
   const cost = useCountUp(summary.costUsd)
   const total = useCountUp(totalExact)
   const input = useCountUp(summary.inputTokens)
@@ -68,7 +70,9 @@ export function KpiHero({ summary }: { summary: UsageSummary }) {
             <strong className="dash-kpi-cost">
               <TokenCount value={Math.round(total)} exact={totalExact} />
             </strong>
-            <span className="dash-kpi-sub">input + output</span>
+            <span className="dash-kpi-sub">
+              in+out+cache · som Cursor Usage
+            </span>
           </div>
         </div>
       </div>

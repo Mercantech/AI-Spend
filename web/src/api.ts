@@ -226,52 +226,86 @@ export const MAX_HISTORY_DAYS = 730
 /** Standard UI-periode for Oversigt. */
 export const DEFAULT_DASHBOARD_DAYS = 30
 
-export type RangePreset = '7d' | '30d' | '90d' | 'ytd' | '1y' | '2y'
+export type RangePreset = '7d' | '30d' | 'mtd' | 'last_month' | 'ytd' | '1y' | '2y'
 
 export const DEFAULT_RANGE_PRESET: RangePreset = '30d'
 
 export const RANGE_PRESET_OPTIONS: { id: RangePreset; label: string }[] = [
   { id: '7d', label: '7d' },
   { id: '30d', label: '30d' },
-  { id: '90d', label: '90d' },
+  { id: 'mtd', label: 'MTD' },
+  { id: 'last_month', label: 'Sidste md' },
   { id: 'ytd', label: 'YTD' },
   { id: '1y', label: '1 år' },
   { id: '2y', label: '2 år' },
 ]
 
-export function rangePresetLabel(preset: RangePreset): string {
-  switch (preset) {
-    case '7d':
-      return 'Seneste 7 dage'
-    case '30d':
-      return 'Seneste 30 dage'
-    case '90d':
-      return 'Seneste 90 dage'
-    case 'ytd':
-      return `År til dato (${new Date().getUTCFullYear()})`
-    case '1y':
-      return 'Seneste år'
-    case '2y':
-      return 'Seneste 2 år'
-  }
+/** Start af lokal kalenderdag (matcher Cursor usage-vinduer bedre end rullende timer). */
+function startOfLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0)
 }
 
-export function rangeFromDays(days: number): { from: string; to: string } {
+function endOfLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999)
+}
+
+/** Inklusiv kalenderdage bagud (7d = i dag + 6 forrige dage), som Cursor Oct 09–Oct 15. */
+export function rangeFromInclusiveDays(days: number): { from: string; to: string } {
   const to = new Date()
-  const from = new Date()
-  from.setUTCDate(from.getUTCDate() - days)
+  const from = startOfLocalDay(to)
+  from.setDate(from.getDate() - (days - 1))
   return { from: from.toISOString(), to: to.toISOString() }
 }
 
+export function formatRangeLabel(fromIso: string, toIso: string): string {
+  const fmt = new Intl.DateTimeFormat('da-DK', { day: 'numeric', month: 'short' })
+  return `${fmt.format(new Date(fromIso))} – ${fmt.format(new Date(toIso))}`
+}
+
+export function rangePresetLabel(preset: RangePreset, range?: { from: string; to: string }): string {
+  const span = range ? formatRangeLabel(range.from, range.to) : null
+  const base = (() => {
+    switch (preset) {
+      case '7d':
+        return 'Seneste 7 dage'
+      case '30d':
+        return 'Seneste 30 dage'
+      case 'mtd':
+        return 'Måned til dato'
+      case 'last_month':
+        return 'Sidste måned'
+      case 'ytd':
+        return `År til dato (${new Date().getFullYear()})`
+      case '1y':
+        return 'Seneste år'
+      case '2y':
+        return 'Seneste 2 år'
+    }
+  })()
+  return span ? `${base} · ${span}` : base
+}
+
+export function rangeFromDays(days: number): { from: string; to: string } {
+  return rangeFromInclusiveDays(days)
+}
+
 export function rangeFromPreset(preset: RangePreset): { from: string; to: string } {
-  const to = new Date()
+  const now = new Date()
   if (preset === 'ytd') {
-    const from = new Date(Date.UTC(to.getUTCFullYear(), 0, 1, 0, 0, 0, 0))
-    return { from: from.toISOString(), to: to.toISOString() }
+    const from = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0)
+    return { from: from.toISOString(), to: now.toISOString() }
   }
-  const days =
-    preset === '7d' ? 7 : preset === '30d' ? 30 : preset === '90d' ? 90 : preset === '1y' ? 365 : 730
-  return rangeFromDays(days)
+  if (preset === 'mtd') {
+    const from = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+    return { from: from.toISOString(), to: now.toISOString() }
+  }
+  if (preset === 'last_month') {
+    const from = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0)
+    const last = new Date(now.getFullYear(), now.getMonth(), 0)
+    return { from: from.toISOString(), to: endOfLocalDay(last).toISOString() }
+  }
+  const days = preset === '7d' ? 7 : preset === '30d' ? 30 : preset === '1y' ? 365 : 730
+  return rangeFromInclusiveDays(days)
 }
 
 /** @param days default 30 for UI; brug MAX_HISTORY_DAYS til backfill. */

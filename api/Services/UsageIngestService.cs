@@ -34,74 +34,61 @@ public sealed class UsageIngestService(
             log.LogWarning(ex, "Cursor live meters kunne ikke hentes");
         }
 
+        // Erstat hele vinduet — fjerner historiske dubletter (id vs hash-nøgle).
+        var oldInRange = await db.UsageEvents
+            .Where(x => x.OrganizationId == connection.OrganizationId
+                        && x.Provider == ProviderType.Cursor
+                        && x.OccurredAt >= from
+                        && x.OccurredAt <= to)
+            .ToListAsync(ct);
+        if (oldInRange.Count > 0)
+        {
+            db.UsageEvents.RemoveRange(oldInRange);
+            await db.SaveChangesAsync(ct);
+            log.LogInformation("Cursor ingest fjernede {N} gamle events i vinduet", oldInRange.Count);
+        }
+
         var upserted = 0;
         var rawStored = 0;
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var ev in events)
         {
-            var existing = await db.UsageEvents.FirstOrDefaultAsync(x =>
-                x.OrganizationId == connection.OrganizationId
-                && x.Provider == ProviderType.Cursor
-                && x.ExternalKey == ev.ExternalKey, ct);
+            if (!seenKeys.Add(ev.ExternalKey))
+                continue;
 
-            ProviderRaw? raw = null;
-            if (existing is null)
+            var raw = new ProviderRaw
             {
-                raw = new ProviderRaw
-                {
-                    OrganizationId = connection.OrganizationId,
-                    Provider = ProviderType.Cursor,
-                    PayloadJson = ev.RawJson
-                };
-                db.ProviderRaws.Add(raw);
-                rawStored++;
-            }
+                OrganizationId = connection.OrganizationId,
+                Provider = ProviderType.Cursor,
+                PayloadJson = ev.RawJson
+            };
+            db.ProviderRaws.Add(raw);
+            rawStored++;
 
-            if (existing is null)
+            db.UsageEvents.Add(new UsageEvent
             {
-                db.UsageEvents.Add(new UsageEvent
-                {
-                    OrganizationId = connection.OrganizationId,
-                    Provider = ProviderType.Cursor,
-                    ExternalKey = ev.ExternalKey,
-                    OccurredAt = ev.OccurredAt,
-                    Model = ev.Model,
-                    UserEmail = ev.UserEmail,
-                    Kind = ev.Kind,
-                    ConversationId = ev.ConversationId,
-                    IsTokenBasedCall = ev.IsTokenBasedCall,
-                    InputTokens = ev.InputTokens,
-                    OutputTokens = ev.OutputTokens,
-                    CacheWriteTokens = ev.CacheWriteTokens,
-                    CacheReadTokens = ev.CacheReadTokens,
-                    CostCents = ev.TotalCents,
-                    ChargedCents = ev.ChargedCents,
-                    CursorTokenFee = ev.CursorTokenFee,
-                    RequestsCosts = ev.RequestsCosts,
-                    RequestCount = 1,
-                    RawPayload = raw
-                });
-                upserted++;
-            }
-            else
-            {
-                existing.OccurredAt = ev.OccurredAt;
-                existing.Model = ev.Model;
-                existing.UserEmail = ev.UserEmail;
-                existing.Kind = ev.Kind;
-                existing.ConversationId = ev.ConversationId;
-                existing.IsTokenBasedCall = ev.IsTokenBasedCall;
-                existing.InputTokens = ev.InputTokens;
-                existing.OutputTokens = ev.OutputTokens;
-                existing.CacheWriteTokens = ev.CacheWriteTokens;
-                existing.CacheReadTokens = ev.CacheReadTokens;
-                existing.CostCents = ev.TotalCents;
-                existing.ChargedCents = ev.ChargedCents;
-                existing.CursorTokenFee = ev.CursorTokenFee;
-                existing.RequestsCosts = ev.RequestsCosts;
-                existing.IngestedAt = DateTimeOffset.UtcNow;
-                upserted++;
-            }
+                OrganizationId = connection.OrganizationId,
+                Provider = ProviderType.Cursor,
+                ExternalKey = ev.ExternalKey,
+                OccurredAt = ev.OccurredAt,
+                Model = ev.Model,
+                UserEmail = ev.UserEmail,
+                Kind = ev.Kind,
+                ConversationId = ev.ConversationId,
+                IsTokenBasedCall = ev.IsTokenBasedCall,
+                InputTokens = ev.InputTokens,
+                OutputTokens = ev.OutputTokens,
+                CacheWriteTokens = ev.CacheWriteTokens,
+                CacheReadTokens = ev.CacheReadTokens,
+                CostCents = ev.TotalCents,
+                ChargedCents = ev.ChargedCents,
+                CursorTokenFee = ev.CursorTokenFee,
+                RequestsCosts = ev.RequestsCosts,
+                RequestCount = 1,
+                RawPayload = raw
+            });
+            upserted++;
         }
 
         await db.SaveChangesAsync(ct);
