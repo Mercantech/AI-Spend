@@ -40,7 +40,9 @@ function useCountUp(target: number, durationMs = 700): number {
 }
 
 export function KpiHero({ summary }: { summary: UsageSummary }) {
+  const totalExact = summary.inputTokens + summary.outputTokens
   const cost = useCountUp(summary.costUsd)
+  const total = useCountUp(totalExact)
   const input = useCountUp(summary.inputTokens)
   const output = useCountUp(summary.outputTokens)
   const events = useCountUp(summary.eventCount)
@@ -51,13 +53,24 @@ export function KpiHero({ summary }: { summary: UsageSummary }) {
   return (
     <section className="dash-kpi">
       <div className="dash-kpi-primary">
-        <span className="dash-kpi-label">Omkostning</span>
-        <strong className="dash-kpi-cost" title={formatUsd(summary.costUsd)}>
-          {formatUsd(cost)}
-        </strong>
-        {summary.chargedUsd > 0 && summary.chargedUsd !== summary.costUsd && (
-          <span className="dash-kpi-sub">Charged {formatUsd(summary.chargedUsd)}</span>
-        )}
+        <div className="dash-kpi-pair">
+          <div>
+            <span className="dash-kpi-label">Omkostning</span>
+            <strong className="dash-kpi-cost" title={formatUsd(summary.costUsd)}>
+              {formatUsd(cost)}
+            </strong>
+            {summary.chargedUsd > 0 && summary.chargedUsd !== summary.costUsd && (
+              <span className="dash-kpi-sub">Charged {formatUsd(summary.chargedUsd)}</span>
+            )}
+          </div>
+          <div>
+            <span className="dash-kpi-label">Total tokens</span>
+            <strong className="dash-kpi-cost">
+              <TokenCount value={Math.round(total)} exact={totalExact} />
+            </strong>
+            <span className="dash-kpi-sub">input + output</span>
+          </div>
+        </div>
       </div>
       <div className="dash-kpi-grid">
         <div>

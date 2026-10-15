@@ -554,6 +554,13 @@ table.data .actions {
   gap: 0.25rem;
 }
 
+.dash-kpi-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+
 .dash-kpi-label {
   display: block;
   color: var(--muted);
